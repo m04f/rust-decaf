@@ -1,0 +1,3 @@
+[submodule "decaf-tests"]
+	path = decaf-tests
+	url = https://github.com/mostafa-khaled775/decaf-tests
