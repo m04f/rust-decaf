@@ -52,6 +52,8 @@ pub enum Token {
     Assign,
     AddAssign,
     SubAssign,
+    Increment,
+    Decrement,
     // delimiters
     Semicolon,
     Comma,
@@ -162,6 +164,8 @@ fn symbol(span: Span) -> Option<(Spanned<Result>, Span)> {
                 b"-=" => Some((ch.into_spanned(Ok(Token::SubAssign)), rem)),
                 b"&&" => Some((ch.into_spanned(Ok(Token::And)), rem)),
                 b"||" => Some((ch.into_spanned(Ok(Token::Or)), rem)),
+                b"--" => Some((ch.into_spanned(Ok(Token::Decrement)), rem)),
+                b"++" => Some((ch.into_spanned(Ok(Token::Increment)), rem)),
                 _ => None,
             }
         } else {
