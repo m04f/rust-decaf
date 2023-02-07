@@ -207,6 +207,7 @@ fn identifier<'a>(span: Span<'a>) -> Option<(Spanned<Result>, Span<'a>)> {
             b"void" => (span.into_spanned(Ok(Token::Void)), rem),
             b"int" => (span.into_spanned(Ok(Token::Int)), rem),
             b"bool" => (span.into_spanned(Ok(Token::Bool)), rem),
+            b"if" => (span.into_spanned(Ok(Token::If)), rem),
             b"for" => (span.into_spanned(Ok(Token::For)), rem),
             b"while" => (span.into_spanned(Ok(Token::While)), rem),
             b"break" => (span.into_spanned(Ok(Token::Break)), rem),
