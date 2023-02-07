@@ -36,9 +36,9 @@ impl App for Lexer {
                         Semicolon | And | Or | Equal | NotEqual | Greater | GreaterEqual | Less
                         | LessEqual | Minus | Plus | Assign | SubAssign | AddAssign | Colon
                         | Question | Comma | Void | For | Continue | Break | While | Int | Bool
-                        | If | Else | Return | False | True | Len | Star | Slash | Percent | Not
-                        | LeftParen | RightParen | CurlyLeft | CurlyRight | SquareLeft
-                        | SquareRight | Increment | Decrement,
+                        | If | Else | Return | Len | Star | Slash | Percent | Not | LeftParen
+                        | RightParen | CurlyLeft | CurlyRight | SquareLeft | SquareRight
+                        | Increment | Decrement,
                     ) => {
                         println!("{} {}", tok.line(), string(tok.fragment()));
                         None
@@ -61,6 +61,10 @@ impl App for Lexer {
                     }
                     Ok(Char(_)) => {
                         println!("{} CHARLITERAL {}", tok.line(), string(tok.fragment()));
+                        None
+                    }
+                    Ok(True | False) => {
+                        println!("{} BOOLLITERAL {}", tok.line(), string(tok.fragment()));
                         None
                     }
                     // errors are logged in the lexer module anyways
