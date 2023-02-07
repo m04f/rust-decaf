@@ -6,4 +6,4 @@ implementation of decaf language in rust.
 
 |        | passing | failing |
 |--------|---------|---------|
-| public | 27      | 2       |
+| public | 29      | 0       |

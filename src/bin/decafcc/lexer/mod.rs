@@ -64,7 +64,7 @@ impl App for Lexer {
                         None
                     }
                     Ok(True | False) => {
-                        println!("{} BOOLLITERAL {}", tok.line(), string(tok.fragment()));
+                        println!("{} BOOLEANLITERAL {}", tok.line(), string(tok.fragment()));
                         None
                     }
                     // errors are logged in the lexer module anyways
