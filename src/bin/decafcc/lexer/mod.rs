@@ -38,7 +38,7 @@ impl App for Lexer {
                         | Question | Comma | Void | For | Continue | Break | While | Int | Bool
                         | If | Else | Return | Len | Star | Slash | Percent | Not | LeftParen
                         | RightParen | CurlyLeft | CurlyRight | SquareLeft | SquareRight
-                        | Increment | Decrement,
+                        | Increment | Decrement | Import,
                     ) => {
                         println!("{} {}", tok.line(), string(tok.fragment()));
                         None

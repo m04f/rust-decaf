@@ -19,6 +19,7 @@ pub enum Error<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
     // keywords
+    Import,
     If,
     Else,
     While,
@@ -208,6 +209,7 @@ fn identifier<'a>(span: Span<'a>) -> Option<(Spanned<Result>, Span<'a>)> {
         None
     } else {
         let keyword = |(span, rem): (Span<'a>, _)| match span.source() {
+            b"import" => (span.into_spanned(Ok(Token::Import)), rem),
             b"void" => (span.into_spanned(Ok(Token::Void)), rem),
             b"int" => (span.into_spanned(Ok(Token::Int)), rem),
             b"bool" => (span.into_spanned(Ok(Token::Bool)), rem),
