@@ -8,6 +8,7 @@ pub enum Error<'a> {
     InvalidEscape(u8),
     UnexpectedChar(u8),
     EmptyChar,
+    NonAsciiChars,
     BadStringLiteral(Vec<Spanned<'a, Error<'a>>>),
     UnterminatedString,
     UnterminatedComment,
@@ -383,14 +384,36 @@ fn string_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
     }
 }
 
+fn is_ascii(c: &u8) -> bool {
+    match c {
+        32..=126 | b'\t' | b'\n' | b'\r' => true,
+        _ => false
+    }
+}
+
+/// collect non-ascii chars
+fn non_ascii_graphic_chars(span: Span) -> Option<(Spanned<Result>, Span)> {
+    assert!(!span.is_empty());
+    // this panics if the span is empty
+    let (bad_chars, rem) = span.split_once(is_ascii).unwrap();
+    if bad_chars.is_empty() {
+        None
+    } else {
+        Some((bad_chars.into_spanned(Err(Error::NonAsciiChars)), rem))
+    }
+}
+
 fn token(span: Span) -> Option<(Spanned<Result>, Span)> {
     if span.is_empty() {
         return None;
     } else {
-        identifier(span)
+        // the non_ascii_graphic_chars has to come before spaces
+        // skip_spaces skips some of illegal chars
+        non_ascii_graphic_chars(span)
             .or_else(|| skip_spaces(span))
             .or_else(|| skip_line_comment(span))
             .or_else(|| skip_block_comment(span))
+            .or_else(|| identifier(span))
             .or_else(|| int_literal(span))
             .or_else(|| char_literal(span))
             .or_else(|| string_literal(span))
@@ -497,6 +520,12 @@ pub fn log_err<'a, T: AsRef<str> + 'a>(
             }
             Error::UnterminatedComment => {
                 loge(err.position(), "unterminated block comment");
+            }
+            Error::NonAsciiChars => {
+                loge(
+                    err.position(),
+                    &format!("non-ascii characters: {}", string(err.fragment())),
+                );
             }
             _ => unreachable!(),
         };
@@ -741,4 +770,13 @@ mod test {
             ]
         )
     }
+
+    // #[test]
+    // fn non_ascii_graphic_chars() {
+    //     use super::*;
+    //     let text = "αβγδεζηθικλμνξοπρστυφχψω".as_bytes();
+    //     let span = Span::new(text);
+    //     let (s1, s2) = non_ascii_graphic_chars(span).unwrap();
+    //     assert_eq!(s1.get().clone().unwrap(), Error::NonAsciiChars);
+    // }
 }
