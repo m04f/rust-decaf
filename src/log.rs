@@ -8,6 +8,12 @@ impl Logger<io::Stderr> {
     }
 }
 
+impl<S: Write> Logger<S> {
+    pub fn new_with_stream(stream: S) -> Self {
+        Self(stream)
+    }
+}
+
 /// enum to represint ansi colors
 #[allow(unused)]
 enum Color {
@@ -51,16 +57,16 @@ impl<S: Write> Logger<S> {
     }
 
     /// error messages' format is taken from gcc's output
-    pub fn log_error(&mut self, file_name: Option<&str>, (line, column): (u32, u32), msg: &str) {
+    pub fn log_error<T: AsRef<str>>(
+        &mut self,
+        file_name: T,
+        (line, column): (u32, u32),
+        msg: &str,
+    ) {
         write!(
             self.0,
-            "{}:{}:{}: {}error{}: {}\n",
-            file_name.unwrap_or("<stdin>"),
-            line,
-            column,
-            Color::Red.to_ansi(),
-            Color::Red.reset(),
-            msg,
+            "{}",
+            format_error(file_name, (line, column), msg)
         )
         .unwrap();
     }
@@ -92,34 +98,18 @@ impl<S: Write> Logger<S> {
     }
 }
 
-pub fn log_error(file_name: Option<&str>, pos: (u32, u32), msg: &str) {
-    let mut logger = Logger::new();
-    logger.log_error(file_name, pos, msg);
-}
-
-pub fn log_warning(file_name: Option<&str>, pos: (u32, u32), msg: &str) {
-    let mut logger = Logger::new();
-    logger.log_warning(file_name, pos, msg);
-}
-
-/// macro to log errors given position and optional file arguemnt
-/// if no file is given it defaults to `<stdin>`
-/// example:
-/// ```
-/// #[macro_use]
-/// use dcfrs::loge;
-/// loge!((1, 2), "Error message");
-/// loge!("/dev/stdin", (2, 2), "invalid escape character {}", b'c')
-/// ```
-#[macro_export]
-macro_rules! loge {
-    ($pos:expr, $msg:expr) => {
-        $crate::log::log_error(None, $pos, $msg);
-    };
-    ($file:expr, $pos:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::log::log_error(Some($file), $pos, &format!($fmt, $($arg)*));
-    };
-    ($pos:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::log::log_error(None, $pos, &format!($fmt, $($arg)*));
-    };
+pub fn format_error<F: AsRef<str>, M: AsRef<str>>(
+    file_name: F,
+    position: (u32, u32),
+    msg: M,
+) -> String {
+    format!(
+        "{}:{}:{}: {}error{}: {}",
+        file_name.as_ref(),
+        position.0,
+        position.1,
+        Color::Red.to_ansi(),
+        Color::Red.reset(),
+        msg.as_ref()
+    )
 }

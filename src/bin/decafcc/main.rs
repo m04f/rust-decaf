@@ -1,6 +1,20 @@
+use std::io::stderr;
+
+use crate::lexer::Lexer;
+
 mod lexer;
 
+trait App {
+    fn run(
+        stdout: &mut dyn std::io::Write,
+        stderr: &mut dyn std::io::Write,
+        input_file: String,
+    ) -> ExitStatus;
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum ExitStatus {
+    #[default]
     Success,
     Fail,
 }
@@ -13,6 +27,8 @@ enum Mode {
 struct Config {
     mode: Option<Mode>,
     input_file: Option<String>,
+    output_file: Option<String>,
+    stderr: Option<String>,
 }
 
 impl Config {
@@ -20,6 +36,8 @@ impl Config {
         Self {
             mode: None,
             input_file: None,
+            output_file: None,
+            stderr: None,
         }
     }
 
@@ -37,8 +55,11 @@ impl Config {
             if let Some(arg) = first_arg {
                 match arg.as_str() {
                     "-t" => {
-                        config.mode = Some(Config::get_mode(args.next().unwrap())
-                                           .unwrap());
+                        config.mode = Some(Config::get_mode(args.next().unwrap()).unwrap());
+                        parse(config, args)
+                    }
+                    "-o" | "--output" => {
+                        config.output_file = Some(args.next().unwrap());
                         parse(config, args)
                     }
                     s if !s.is_empty() => {
@@ -56,30 +77,29 @@ impl Config {
 }
 
 fn main() {
-    use std::{
-        env::args,
-        fs,
-        io::{self, Read},
-    };
+    use std::{env::args, fs, io};
 
     let config = Config::parse(args());
-    eprintln!("mode: {}", format!("{:?}", config.mode.unwrap()).to_lowercase());
-    let input = {
-        let mut buffer = vec![];
-        config
-            .input_file
-            .map(|file| fs::File::open(file).unwrap().read_to_end(&mut buffer))
-            .unwrap_or(io::stdin().read_to_end(&mut buffer))
-            .unwrap();
-        buffer
-    };
+    eprintln!(
+        "mode: {}",
+        format!("{:?}", config.mode.unwrap()).to_lowercase()
+    );
+    let mut output_stream: Box<dyn io::Write> = config
+        .output_file
+        .map(|path| {
+            Box::new(io::BufWriter::new(fs::File::create(path).unwrap())) as Box<dyn io::Write>
+        })
+        .unwrap_or(Box::new(stderr()));
+    let mut stderr = Box::new(stderr()) as Box<dyn io::Write>;
     match config.mode {
-        Some(Mode::Lexer) => {
-            lexer::run(&input);
-        }
+        Some(Mode::Lexer) => Lexer::run(
+            &mut output_stream,
+            &mut stderr,
+            config.input_file.unwrap_or("/dev/stdin".to_string()),
+        ),
         None => {
             println!("No mode specified");
+            ExitStatus::Fail
         }
-    }
-    {}
+    };
 }

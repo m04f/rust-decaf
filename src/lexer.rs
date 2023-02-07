@@ -1,5 +1,4 @@
-use crate::loge;
-use crate::span::*;
+use crate::{log::format_error, span::*};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Error<'a> {
@@ -8,6 +7,7 @@ pub enum Error<'a> {
     InvalidChar(u8),
     InvalidEscape(u8),
     UnexpectedChar(u8),
+    EmptyChar,
     BadStringLiteral(Vec<Spanned<'a, Error<'a>>>),
     UnterminatedString,
     UnterminatedComment,
@@ -298,15 +298,18 @@ const fn is_escaped_char(c: u8) -> bool {
 fn escaped_char<'a>(span: Span<'a>) -> Spanned<Result> {
     assert!(span.len() == 4);
     assert!(span.starts_with(b"'\\"));
-    assert!(span.ends_with(b"'"));
-    let c = span[2];
-    match c {
-        b'n' => span.into_spanned(Ok(Token::Char(b'\n'))),
-        b't' => span.into_spanned(Ok(Token::Char(b'\t'))),
-        b'\\' => span.into_spanned(Ok(Token::Char(b'\\'))),
-        b'\'' => span.into_spanned(Ok(Token::Char(b'\''))),
-        b'"' => span.into_spanned(Ok(Token::Char(b'"'))),
-        c => span.into_spanned(Err(Error::InvalidEscape(c))),
+    if span[3] != b'\'' {
+        span.into_spanned(Err(Error::UnterminatedChar))
+    } else {
+        let c = span[2];
+        match c {
+            b'n' => span.into_spanned(Ok(Token::Char(b'\n'))),
+            b't' => span.into_spanned(Ok(Token::Char(b'\t'))),
+            b'\\' => span.into_spanned(Ok(Token::Char(b'\\'))),
+            b'\'' => span.into_spanned(Ok(Token::Char(b'\''))),
+            b'"' => span.into_spanned(Ok(Token::Char(b'"'))),
+            c => span.into_spanned(Err(Error::InvalidEscape(c))),
+        }
     }
 }
 
@@ -339,11 +342,12 @@ fn char_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
             Some((escaped_char(lit), rem))
         }
     } else {
-        if span[2] != b'\'' {
-            Some((
-                span.into_spanned(Err(Error::UnterminatedChar)),
-                span.split_at(span.len()).1,
-            ))
+        if span[1] == b'\'' {
+            let (lit, rem) = span.split_at(2);
+            Some((lit.into_spanned(Err(Error::EmptyChar)), rem))
+        } else if span[2] != b'\'' {
+            let (lit, rem) = span.split_at(2);
+            Some((lit.into_spanned(Err(Error::UnterminatedChar)), rem))
         } else {
             let (lit, rem) = span.split_at(3);
             Some((dcf_char(lit), rem))
@@ -394,7 +398,10 @@ fn token(span: Span) -> Option<(Spanned<Result>, Span)> {
     }
 }
 
-pub fn tokens(text: &[u8]) -> impl Iterator<Item = Spanned<Result>> {
+pub fn tokens<L: FnMut(Spanned<Error>)>(
+    text: &[u8],
+    mut log: L,
+) -> impl Iterator<Item = Spanned<Result>> {
     use std::iter;
     let mut s = Span::new(text);
     iter::from_fn(move || {
@@ -412,52 +419,95 @@ pub fn tokens(text: &[u8]) -> impl Iterator<Item = Spanned<Result>> {
             Ok(Token::Space) | Ok(Token::LineComment) | Ok(Token::BlockComment)
         )
     })
-    .inspect(|tok| {
+    .inspect(move |tok| {
         if let Err(err) = tok.get() {
-            log_err(tok.span().into_spanned(err.clone()))
+            log(tok.span().into_spanned(err.clone()))
         }
     })
     .chain(iter::once(s.into_spanned(Ok(Token::Eof))))
 }
 
-pub fn log_err(err: Spanned<Error>) {
-    let string = |slice: &[u8]| String::from_utf8(slice.to_vec()).unwrap();
-    match err.get() {
-        Error::HexLiteral => {
-            loge!(
-                err.position(),
-                "invalid hex literal: {}",
-                string(err.fragment())
-            );
+/// creats a log function to the given stream.
+/// example:
+/// TODO: fix this
+/// ```
+/// // use dcfrs::lexer::{log_err, tokens};
+///
+/// // let mut mock_stderr = vec![];
+/// // let mut log = log_err(&mut mock_stderr, "test.dcf");
+///
+/// // tokens(b"'\\a'", log);
+/// // assert_eq!(mock_stderr, b"test.dcf:1:2: invalid escape sequence: \\a");
+/// ```
+pub fn log_err<'a, T: AsRef<str> + 'a>(
+    mut write: impl FnMut(String) + 'a,
+    input_file: T,
+) -> impl FnMut(Spanned<Error>) + 'a {
+    move |err| {
+        let string = |slice: &[u8]| String::from_utf8(slice.to_vec()).unwrap();
+        let mut loge =
+            |pos: (u32, u32), msg: &str| write(format_error(input_file.as_ref(), pos, msg));
+
+        fn print_u8(c: u8) -> String {
+            if c.is_ascii_digit() {
+                format!("{}", c as char)
+            } else {
+                format!("\\x{:02x}", c)
+            }
         }
-        Error::DecimalLiteral => {
-            loge!(
-                err.position(),
-                "invalid decimal literal: {}",
-                string(err.fragment())
-            );
-        }
-        Error::InvalidEscape(c) => {
-            loge!(err.position(), "invalid escape sequence: \\{}", c);
-        }
-        Error::InvalidChar(c) => {
-            loge!(err.position(), "invalid character literal: {}", c);
-        }
-        Error::UnexpectedChar(c) => {
-            loge!(err.position(), "unexpected character: {}", c);
-        }
-        Error::UnterminatedString => {
-            loge!(err.position(), "unterminated string literal");
-        }
-        Error::UnterminatedChar => {
-            loge!(err.position(), "unterminated char literal");
-        }
-        Error::UnterminatedComment => {
-            loge!(err.position(), "unterminated block comment");
-        }
-        Error::BadStringLiteral(errs) => {
-            errs.into_iter().for_each(|err| log_err(err.clone()));
-        }
+        let mut handle_single_error = |err: Spanned<Error>| match err.get() {
+            Error::HexLiteral => {
+                loge(
+                    err.position(),
+                    &format!("invalid hex literal: {}", string(err.fragment())),
+                );
+            }
+            Error::DecimalLiteral => {
+                loge(
+                    err.position(),
+                    &format!("invalid decimal literal: {}", string(err.fragment())),
+                );
+            }
+            Error::EmptyChar => {
+                loge(err.position(), "empty char literal");
+            }
+            Error::InvalidEscape(c) => {
+                loge(
+                    err.position(),
+                    &format!("invalid escape sequence: \\{}", print_u8(*c)),
+                );
+            }
+            Error::InvalidChar(c) => {
+                loge(
+                    err.position(),
+                    &format!("invalid character literal: {}", print_u8(*c)),
+                );
+            }
+            Error::UnexpectedChar(c) => {
+                loge(
+                    err.position(),
+                    &format!("unexpected character: {}", print_u8(*c)),
+                );
+            }
+            Error::UnterminatedString => {
+                loge(err.position(), "unterminated string literal");
+            }
+            Error::UnterminatedChar => {
+                loge(err.position(), "unterminated char literal");
+            }
+            Error::UnterminatedComment => {
+                loge(err.position(), "unterminated block comment");
+            }
+            _ => unreachable!(),
+        };
+
+        match err.get() {
+            Error::BadStringLiteral(errs) => {
+                errs.into_iter()
+                    .for_each(|err| handle_single_error(err.clone()));
+            }
+            _ => handle_single_error(err),
+        };
     }
 }
 
@@ -466,9 +516,9 @@ mod test {
     use super::Token::*;
     use super::*;
 
-    fn parsed<'a>(opt: Option<(Spanned<'a, Result<'a>>, Span<'a>)>) -> Spanned<'a, Result<'a>> {
-        opt.unwrap().0
-    }
+    // fn parsed<'a>(opt: Option<(Spanned<'a, Result<'a>>, Span<'a>)>) -> Spanned<'a, Result<'a>> {
+    //     opt.unwrap().0
+    // }
 
     fn rem<'a>(opt: Option<(Spanned<'a, Result<'a>>, Span<'a>)>) -> Span<'a> {
         opt.unwrap().1
