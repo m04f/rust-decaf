@@ -1,14 +1,14 @@
 use crate::{log::format_error, span::*};
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Error<'a> {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Error {
     EmptyHexLiteral,
     InvalidChar(u8),
     InvalidEscape(u8),
     UnexpectedChar(u8),
     EmptyChar,
     NonAsciiChars,
-    BadStringLiteral(Vec<Spanned<'a, Error<'a>>>),
+    StringLiteral,
     UnterminatedString,
     UnterminatedComment,
     UnterminatedChar,
@@ -67,8 +67,8 @@ pub enum Token {
     Identifier,
     DecimalLiteral,
     HexLiteral,
-    Char(u8),
-    String,
+    StringLiteral,
+    CharLiteral(u8),
 
     Space,
     LineComment,
@@ -78,60 +78,16 @@ pub enum Token {
     Eof,
 }
 
-type Result<'a> = std::result::Result<Token, Error<'a>>;
+type Result = std::result::Result<Token, Error>;
 
-struct StringLiteralBuilder<'a> {
-    escaped: bool,
-    errors: Vec<Spanned<'a, Error<'a>>>,
-}
-
-impl<'a> StringLiteralBuilder<'a> {
-    const fn new() -> Self {
-        Self {
-            escaped: false,
-            errors: Vec::new(),
-        }
-    }
-
-    const fn escape_next(&mut self) {
-        self.escaped = true;
-    }
-
-    fn build_from_span(span: Span<'a>) -> Spanned<Result> {
-        assert!(span.starts_with(b"\""));
-        let mut builder = Self::new();
-        builder.escape_next();
-        let mut builder = span
-            .spans::<1>()
-            // skip the last char
-            .take(span.len() - 1)
-            .fold(builder, |mut builder, c| {
-                if let Some(err) = builder.update(c[0]) {
-                    builder.errors.push(c.into_spanned(err));
-                }
-                builder
-            });
-
-        if !span.ends_with(b"\"") {
-            builder
-                .errors
-                .push(span.into_spanned(Error::UnterminatedString));
-        } else if builder.escaped {
-            builder
-                .errors
-                .push(span.into_spanned(Error::UnterminatedString));
-        }
-
-        if builder.errors.is_empty() {
-            span.into_spanned(Ok(Token::String))
-        } else {
-            span.into_spanned(Err(Error::BadStringLiteral(builder.errors)))
-        }
-    }
-
-    fn update(&mut self, c: u8) -> Option<Error<'a>> {
-        if self.escaped {
-            self.escaped = false;
+fn get_string_errors<'a>(span: Span<'a>) -> impl Iterator<Item = Spanned<Error>> + 'a {
+    let mut escape_next = true;
+    let mut error_checker = move |s: Span| {
+        let c = s[0];
+        if escape_next {
+            println!("c: {}, escape_next: {}", c as char, escape_next);
+            escape_next = false;
+            println!("c: {}, escape_next: {}", c as char, escape_next);
             if !is_escaped_char(c) {
                 Some(Error::InvalidEscape(c))
             } else {
@@ -139,7 +95,9 @@ impl<'a> StringLiteralBuilder<'a> {
             }
         } else {
             if c == b'\\' {
-                self.escaped = true;
+                println!("c: {}, escape_next: {}", c as char, escape_next);
+                escape_next = true;
+                println!("c: {}, escape_next: {}", c as char, escape_next);
                 None
             } else if !is_dcf_char(c) {
                 Some(Error::InvalidChar(c))
@@ -147,7 +105,16 @@ impl<'a> StringLiteralBuilder<'a> {
                 None
             }
         }
-    }
+    };
+    let terminated = if span.ends_with(b"\\\"") || !span.ends_with(b"\"") {
+        Some(span.into_spanned(Error::UnterminatedString))
+    } else {
+        None
+    };
+    span.spans::<1>()
+        .take(span.len() - 1)
+        .filter_map(move |s| error_checker(s).map(|e| s.into_spanned(e)))
+        .chain(terminated)
 }
 
 fn symbol(span: Span) -> Option<(Spanned<Result>, Span)> {
@@ -314,11 +281,11 @@ fn escaped_char<'a>(span: Span<'a>) -> Spanned<Result> {
     } else {
         let c = span[2];
         match c {
-            b'n' => span.into_spanned(Ok(Token::Char(b'\n'))),
-            b't' => span.into_spanned(Ok(Token::Char(b'\t'))),
-            b'\\' => span.into_spanned(Ok(Token::Char(b'\\'))),
-            b'\'' => span.into_spanned(Ok(Token::Char(b'\''))),
-            b'"' => span.into_spanned(Ok(Token::Char(b'"'))),
+            b'n' => span.into_spanned(Ok(Token::CharLiteral(b'\n'))),
+            b't' => span.into_spanned(Ok(Token::CharLiteral(b'\t'))),
+            b'\\' => span.into_spanned(Ok(Token::CharLiteral(b'\\'))),
+            b'\'' => span.into_spanned(Ok(Token::CharLiteral(b'\''))),
+            b'"' => span.into_spanned(Ok(Token::CharLiteral(b'"'))),
             c => span.into_spanned(Err(Error::InvalidEscape(c))),
         }
     }
@@ -332,7 +299,7 @@ fn dcf_char<'a>(span: Span<'a>) -> Spanned<Result> {
     assert!(span.len() == 3);
     let c = span[1];
     match c {
-        c if is_dcf_char(c) => span.into_spanned(Ok(Token::Char(c))),
+        c if is_dcf_char(c) => span.into_spanned(Ok(Token::CharLiteral(c))),
         _ => span.into_spanned(Err(Error::InvalidChar(c))),
     }
 }
@@ -388,7 +355,11 @@ fn string_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
         });
 
         // collect errors in the string literal
-        Some((StringLiteralBuilder::build_from_span(lit), rem))
+        if get_string_errors(lit).next().is_some() {
+            Some((lit.into_spanned(Err(Error::StringLiteral)), rem))
+        } else {
+            Some((lit.into_spanned(Ok(Token::StringLiteral)), rem))
+        }
     } else {
         None
     }
@@ -454,7 +425,7 @@ pub fn tokens<L: FnMut(Spanned<Error>)>(
     })
     .inspect(move |tok| {
         if let Err(err) = tok.get() {
-            log(tok.span().into_spanned(err.clone()))
+            log(tok.span().into_spanned(*err))
         }
     })
     .chain(iter::once(s.into_spanned(Ok(Token::Eof))))
@@ -535,9 +506,8 @@ pub fn log_err<'a, T: AsRef<str> + 'a>(
         };
 
         match err.get() {
-            Error::BadStringLiteral(errs) => {
-                errs.into_iter()
-                    .for_each(|err| handle_single_error(err.clone()));
+            Error::StringLiteral => {
+                get_string_errors(err.span()).for_each(handle_single_error);
             }
             _ => handle_single_error(err),
         };
@@ -553,7 +523,7 @@ mod test {
     //     opt.unwrap().0
     // }
 
-    fn rem<'a>(opt: Option<(Spanned<'a, Result<'a>>, Span<'a>)>) -> Span<'a> {
+    fn rem<'a>(opt: Option<(Spanned<'a, Result>, Span<'a>)>) -> Span<'a> {
         opt.unwrap().1
     }
 
@@ -563,21 +533,21 @@ mod test {
         let text = b"abc";
         let span = Span::new(text);
         let (s1, s2) = identifier(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), Identifier);
+        assert_eq!(s1.get().unwrap(), Identifier);
         assert_eq!(s1.fragment(), b"abc");
         assert_eq!(s2.source(), b"");
 
         let text = b"_abc";
         let span = Span::new(text);
         let (s1, s2) = identifier(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), Identifier);
+        assert_eq!(s1.get().unwrap(), Identifier);
         assert_eq!(s1.fragment(), b"_abc");
         assert_eq!(s2.source(), b"");
 
         let text = b"abc def";
         let span = Span::new(text);
         let (s1, s2) = identifier(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), Identifier);
+        assert_eq!(s1.get().unwrap(), Identifier);
         assert_eq!(s1.fragment(), b"abc");
         assert_eq!(s2.source(), b" def");
 
@@ -591,28 +561,28 @@ mod test {
         let text = b"'a'";
         let span = Span::new(text);
         let (s1, s2) = char_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), Char(b'a'));
+        assert_eq!(s1.get().unwrap(), CharLiteral(b'a'));
         assert_eq!(s1.fragment(), b"'a'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'\\'";
         let span = Span::new(text);
         let (s1, s2) = char_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::UnterminatedChar);
+        assert_eq!(s1.get().unwrap_err(), Error::UnterminatedChar);
         assert_eq!(s1.fragment(), b"'\\'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'	'";
         let span = Span::new(text);
         let (s1, s2) = char_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::InvalidChar(b'\t'));
+        assert_eq!(s1.get().unwrap_err(), Error::InvalidChar(b'\t'));
         assert_eq!(s1.fragment(), b"'	'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'\\t'";
         let span = Span::new(text);
         let (s1, s2) = char_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), Char(b'\t'));
+        assert_eq!(s1.get().unwrap(), CharLiteral(b'\t'));
         assert_eq!(s1.fragment(), b"'\\t'");
         assert_eq!(s2.source(), b"");
     }
@@ -623,21 +593,22 @@ mod test {
         let text = b"\"abc\"";
         let span = Span::new(text);
         let (s1, s2) = string_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), String);
+        println!("{:?}", get_string_errors(s1.span()).collect::<Vec<_>>());
+        assert_eq!(s1.get().unwrap(), StringLiteral);
         assert_eq!(s1.fragment(), b"\"abc\"");
         assert_eq!(s2.source(), b"");
 
         let text = br#""\"abcdef\"""#;
         let span = Span::new(text);
         let (s1, s2) = string_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), String,);
+        assert_eq!(s1.get().unwrap(), StringLiteral);
         assert_eq!(s1.fragment(), br#""\"abcdef\"""#);
         assert_eq!(s2.source(), b"");
 
         let text = b"\"abc alot of text that does not\\\" terminate with a quote";
         let span = Span::new(text);
         let (s1, s2) = string_literal(span).unwrap();
-        s1.get().clone().unwrap_err();
+        s1.get().unwrap_err();
         assert_eq!(
             s1.fragment(),
             b"\"abc alot of text that does not\\\" terminate with a quote"
@@ -651,21 +622,21 @@ mod test {
         let text = b"123";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), DecimalLiteral);
+        assert_eq!(s1.get().unwrap(), DecimalLiteral);
         assert_eq!(s1.fragment(), b"123");
         assert_eq!(s2.source(), b"");
 
         let text = b"123abc";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), DecimalLiteral);
+        assert_eq!(s1.get().unwrap(), DecimalLiteral);
         assert_eq!(s1.fragment(), b"123");
         assert_eq!(s2.source(), b"abc");
 
         let text = b"12a111";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), DecimalLiteral);
+        assert_eq!(s1.get().unwrap(), DecimalLiteral);
         assert_eq!(s1.fragment(), b"12");
         assert_eq!(s2.source(), b"a111");
 
@@ -675,14 +646,14 @@ mod test {
         let text = b"0x123";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), HexLiteral);
+        assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x123");
         assert_eq!(s2.source(), b"");
 
         let text = b"0x123abc";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), HexLiteral);
+        assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x123abc");
         assert_eq!(s2.source(), b"");
 
@@ -690,21 +661,21 @@ mod test {
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
         // really...
-        assert_eq!(s1.get().clone().unwrap(), HexLiteral);
+        assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x123abc");
         assert_eq!(s2.source(), b"g");
 
         let text = b"0x12gabcg";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), HexLiteral);
+        assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x12");
         assert_eq!(s2.source(), b"gabcg");
 
         let text = "0xtttt";
         let span = Span::new(text.as_bytes());
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::EmptyHexLiteral);
+        assert_eq!(s1.get().unwrap_err(), Error::EmptyHexLiteral);
         assert_eq!(s1.fragment(), b"0x");
         assert_eq!(s2.source(), b"tttt");
     }
@@ -737,7 +708,6 @@ mod test {
         let span = Span::new(b"/* comment */sometext");
         let span = skip_block_comment(span);
         assert_eq!(rem(span).source(), b"sometext",);
-        // TODO: check how to see the logged output
         let span = Span::new(b"/* comment ");
         let span = skip_block_comment(span);
         assert_eq!(rem(span).source(), b"");
@@ -757,7 +727,7 @@ mod test {
         let text = b"==";
         let span = Span::new(text);
         let (s1, s2) = symbol(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap(), Equal);
+        assert_eq!(s1.get().unwrap(), Equal);
         assert_eq!(s1.fragment(), b"==");
         assert_eq!(s2.source(), b"");
 
@@ -770,7 +740,7 @@ mod test {
             } else {
                 let (l, r) = symbol(span).unwrap();
                 span = r;
-                Some(l.get().clone().unwrap())
+                Some(l.get().unwrap())
             }
         })
         .collect::<Vec<_>>();
@@ -782,13 +752,4 @@ mod test {
             ]
         )
     }
-
-    // #[test]
-    // fn non_ascii_graphic_chars() {
-    //     use super::*;
-    //     let text = "αβγδεζηθικλμνξοπρστυφχψω".as_bytes();
-    //     let span = Span::new(text);
-    //     let (s1, s2) = non_ascii_graphic_chars(span).unwrap();
-    //     assert_eq!(s1.get().clone().unwrap(), Error::NonAsciiChars);
-    // }
 }

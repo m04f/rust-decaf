@@ -55,11 +55,11 @@ impl App for Lexer {
                         println!("{} INTLITERAL {}", tok.line(), string(tok.fragment()));
                         None
                     }
-                    Ok(String) => {
+                    Ok(StringLiteral) => {
                         println!("{} STRINGLITERAL {}", tok.line(), string(tok.fragment()));
                         None
                     }
-                    Ok(Char(_)) => {
+                    Ok(CharLiteral(_)) => {
                         println!("{} CHARLITERAL {}", tok.line(), string(tok.fragment()));
                         None
                     }
