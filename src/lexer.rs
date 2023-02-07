@@ -2,8 +2,7 @@ use crate::{log::format_error, span::*};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Error<'a> {
-    DecimalLiteral,
-    HexLiteral,
+    EmptyHexLiteral,
     InvalidChar(u8),
     InvalidEscape(u8),
     UnexpectedChar(u8),
@@ -279,21 +278,24 @@ fn skip_block_comment(span: Span) -> Option<(Spanned<Result>, Span)> {
 fn int_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
     assert!(!span.is_empty());
     if span[0].is_ascii_digit() {
-        let (lit, rem) = span
-            .split_once(|c| !c.is_ascii_alphanumeric())
-            .unwrap_or(span.split_at(span.len()));
-        if lit.starts_with(b"0x") {
-            if lit[2..].iter().find(|c| !c.is_ascii_hexdigit()).is_some() {
-                Some((lit.into_spanned(Err(Error::HexLiteral)), rem))
+        if span.starts_with(b"0x") {
+            let (lit, _rem) = span
+                .split_at(2)
+                .1
+                .split_once(|c| !c.is_ascii_hexdigit())
+                .unwrap_or(span.split_at(span.len() - 2));
+            if lit.is_empty() {
+                let (err, rem) = span.split_at(2);
+                Some((err.into_spanned(Err(Error::EmptyHexLiteral)), rem))
             } else {
+                let (lit, rem) = span.split_at(lit.len() + 2);
                 Some((lit.into_spanned(Ok(Token::HexLiteral)), rem))
             }
         } else {
-            if lit[..].iter().find(|c| !c.is_ascii_digit()).is_some() {
-                Some((lit.into_spanned(Err(Error::DecimalLiteral)), rem))
-            } else {
-                Some((lit.into_spanned(Ok(Token::DecimalLiteral)), rem))
-            }
+            let (lit, rem) = span
+                .split_once(|c| !c.is_ascii_digit())
+                .unwrap_or(span.split_at(span.len()));
+            Some((lit.into_spanned(Ok(Token::DecimalLiteral)), rem))
         }
     } else {
         None
@@ -395,7 +397,7 @@ fn string_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
 fn is_ascii(c: &u8) -> bool {
     match c {
         32..=126 | b'\t' | b'\n' | b'\r' => true,
-        _ => false
+        _ => false,
     }
 }
 
@@ -487,16 +489,10 @@ pub fn log_err<'a, T: AsRef<str> + 'a>(
             }
         }
         let mut handle_single_error = |err: Spanned<Error>| match err.get() {
-            Error::HexLiteral => {
+            Error::EmptyHexLiteral => {
                 loge(
                     err.position(),
                     &format!("invalid hex literal: {}", string(err.fragment())),
-                );
-            }
-            Error::DecimalLiteral => {
-                loge(
-                    err.position(),
-                    &format!("invalid decimal literal: {}", string(err.fragment())),
                 );
             }
             Error::EmptyChar => {
@@ -662,16 +658,16 @@ mod test {
         let text = b"123abc";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::DecimalLiteral);
-        assert_eq!(s1.fragment(), b"123abc");
-        assert_eq!(s2.source(), b"");
+        assert_eq!(s1.get().clone().unwrap(), DecimalLiteral);
+        assert_eq!(s1.fragment(), b"123");
+        assert_eq!(s2.source(), b"abc");
 
         let text = b"12a111";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::DecimalLiteral);
-        assert_eq!(s1.fragment(), b"12a111");
-        assert_eq!(s2.source(), b"");
+        assert_eq!(s1.get().clone().unwrap(), DecimalLiteral);
+        assert_eq!(s1.fragment(), b"12");
+        assert_eq!(s2.source(), b"a111");
 
         let text = b"b1111";
         assert!(int_literal(Span::new(text)).is_none());
@@ -693,16 +689,24 @@ mod test {
         let text = b"0x123abcg";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::HexLiteral);
-        assert_eq!(s1.fragment(), b"0x123abcg");
-        assert_eq!(s2.source(), b"");
+        // really...
+        assert_eq!(s1.get().clone().unwrap(), HexLiteral);
+        assert_eq!(s1.fragment(), b"0x123abc");
+        assert_eq!(s2.source(), b"g");
 
         let text = b"0x12gabcg";
         let span = Span::new(text);
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().clone().unwrap_err(), Error::HexLiteral);
-        assert_eq!(s1.fragment(), b"0x12gabcg");
-        assert_eq!(s2.source(), b"");
+        assert_eq!(s1.get().clone().unwrap(), HexLiteral);
+        assert_eq!(s1.fragment(), b"0x12");
+        assert_eq!(s2.source(), b"gabcg");
+
+        let text = "0xtttt";
+        let span = Span::new(text.as_bytes());
+        let (s1, s2) = int_literal(span).unwrap();
+        assert_eq!(s1.get().clone().unwrap_err(), Error::EmptyHexLiteral);
+        assert_eq!(s1.fragment(), b"0x");
+        assert_eq!(s2.source(), b"tttt");
     }
 
     #[test]
