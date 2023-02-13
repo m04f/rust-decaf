@@ -349,7 +349,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     fn var_type(&mut self) -> Result<Type> {
         Self::exact_token(Token::Int)(self)
             .map(|_| Type::int_type())
-            .or_else(|| Self::exact_token(Token::Int)(self).map(|_| Type::bool_type()))
+            .or_else(|| Self::exact_token(Token::Bool)(self).map(|_| Type::bool_type()))
     }
 
     fn expect(&mut self, token: Token) -> Spanned<'a, Error> {
