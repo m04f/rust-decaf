@@ -415,26 +415,29 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     // FIXME: this can return outputs with wrong input **without reporting an error**
     fn field_or_function_decl(&mut self) -> Result<Or<Vec<Var<'a>>, Function<'a>>> {
         let vars_list = |p: &mut Self, ty, first| {
-            p.bump();
-            let vars = p.var_list(ty);
-            match (vars, first) {
-                (Parsed(mut vars), Parsed(first)) => Parsed({
-                    vars.push(first);
-                    vars
-                }),
-                (ErrorWithResult(mut vars), Parsed(first))
-                | (ErrorWithResult(mut vars), ErrorWithResult(first))
-                | (Parsed(mut vars), ErrorWithResult(first)) => ErrorWithResult({
-                    vars.push(first);
-                    vars
-                }),
-                (Nil, Parsed(first)) | (Error, Parsed(first)) => Parsed(vec![first]),
-                (Nil, ErrorWithResult(first)) | (Error, ErrorWithResult(first)) => {
-                    ErrorWithResult(vec![first])
+            {
+                p.bump();
+                let vars = p.var_list(ty);
+                match (vars, first) {
+                    (Parsed(mut vars), Parsed(first)) => Parsed({
+                        vars.push(first);
+                        vars
+                    }),
+                    (ErrorWithResult(mut vars), Parsed(first))
+                    | (ErrorWithResult(mut vars), ErrorWithResult(first))
+                    | (Parsed(mut vars), ErrorWithResult(first)) => ErrorWithResult({
+                        vars.push(first);
+                        vars
+                    }),
+                    (Nil, Parsed(first)) | (Error, Parsed(first)) => Parsed(vec![first]),
+                    (Nil, ErrorWithResult(first)) | (Error, ErrorWithResult(first)) => {
+                        ErrorWithResult(vec![first])
+                    }
+                    (_, Nil) | (_, Error) => unreachable!(),
                 }
-                (_, Nil) | (_, Error) => unreachable!(),
             }
-        }.map(|vars| Or::First(vars));
+            .map(|vars| Or::First(vars))
+        };
         match self.peek() {
             Token::Void => self.void_function().map(Or::Second),
             Token::Int | Token::Bool => {
@@ -474,7 +477,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                             };
                             let peek = self.peek();
                             if peek == Token::Comma {
-                                vars_list(self, ty, first_var)
+                                self.terminated(|p| vars_list(p, ty, first_var), Token::Semicolon)
                             } else if peek == Token::Semicolon {
                                 self.bump();
                                 first_var.map(|var| Or::First(vec![var]))
@@ -491,7 +494,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                         // var declaration
                         Token::Comma => {
                             let first_var = Parsed(Var::scalar(ty, id.unwrap_output()));
-                            vars_list(self, ty, first_var)
+                            self.terminated(|p| vars_list(p, ty, first_var), Token::Semicolon)
                         }
                         // var declaration
                         Token::Semicolon => {

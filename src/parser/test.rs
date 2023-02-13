@@ -4,7 +4,9 @@ macro_rules! parser {
         use crate::parser::Parser;
         println!("parsing: {}", $text);
         Parser::new(
-            tokens($text.as_bytes(), |_| {}).map(|res| res.map(|res| res.unwrap())).inspect(|r| println!("{r:?}")),
+            tokens($text.as_bytes(), |_| {})
+                .map(|res| res.map(|res| res.unwrap()))
+                .inspect(|r| println!("{r:?}")),
             |e| panic!("unexpected error: {e:?}"),
         )
     }};
@@ -314,6 +316,13 @@ fn bad_call_stmt_with_output() {
 fn bool_decl() {
     let mut parser = parser!("bool a;");
     parser.field_or_function_decl().unwrap_parsed();
+}
+
+#[test]
+fn multi_decl() {
+    let mut parser = parser!(r#" int a, b, c;"#);
+    parser.field_or_function_decl().unwrap_parsed();
+    assert!(parser.finised());
 }
 
 // mod legal {
