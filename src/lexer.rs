@@ -14,7 +14,6 @@ pub enum Error {
     UnterminatedChar,
 }
 
-/// lexer for decaf programming language
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
     // keywords
@@ -42,7 +41,7 @@ pub enum Token {
     LessEqual,
     Greater,
     GreaterEqual,
-    Equal,
+    EqualEqual,
     NotEqual,
     And,
     Or,
@@ -78,16 +77,14 @@ pub enum Token {
     Eof,
 }
 
-type Result = std::result::Result<Token, Error>;
+pub type Result = std::result::Result<Token, Error>;
 
 fn get_string_errors<'a>(span: Span<'a>) -> impl Iterator<Item = Spanned<Error>> + 'a {
     let mut escape_next = true;
     let mut error_checker = move |s: Span| {
         let c = s[0];
         if escape_next {
-            println!("c: {}, escape_next: {}", c as char, escape_next);
             escape_next = false;
-            println!("c: {}, escape_next: {}", c as char, escape_next);
             if !is_escaped_char(c) {
                 Some(Error::InvalidEscape(c))
             } else {
@@ -125,7 +122,7 @@ fn symbol(span: Span) -> Option<(Spanned<Result>, Span)> {
             match &ch[..] {
                 b"<=" => Some((ch.into_spanned(Ok(Token::LessEqual)), rem)),
                 b">=" => Some((ch.into_spanned(Ok(Token::GreaterEqual)), rem)),
-                b"==" => Some((ch.into_spanned(Ok(Token::Equal)), rem)),
+                b"==" => Some((ch.into_spanned(Ok(Token::EqualEqual)), rem)),
                 b"!=" => Some((ch.into_spanned(Ok(Token::NotEqual)), rem)),
                 b"+=" => Some((ch.into_spanned(Ok(Token::AddAssign)), rem)),
                 b"-=" => Some((ch.into_spanned(Ok(Token::SubAssign)), rem)),
@@ -428,7 +425,9 @@ pub fn tokens<L: FnMut(Spanned<Error>)>(
             log(tok.span().into_spanned(*err))
         }
     })
-    .chain(iter::once(s.into_spanned(Ok(Token::Eof))))
+    .chain(iter::once(
+        s.split_at(s.len()).1.into_spanned(Ok(Token::Eof)),
+    ))
 }
 
 /// creats a log function to the given stream.
@@ -727,7 +726,7 @@ mod test {
         let text = b"==";
         let span = Span::new(text);
         let (s1, s2) = symbol(span).unwrap();
-        assert_eq!(s1.get().unwrap(), Equal);
+        assert_eq!(s1.get().unwrap(), EqualEqual);
         assert_eq!(s1.fragment(), b"==");
         assert_eq!(s2.source(), b"");
 
@@ -751,5 +750,17 @@ mod test {
                 Colon,
             ]
         )
+    }
+
+    #[test]
+    fn eof() {
+        use super::*;
+        let text = b"some text ***  // comment";
+        let mut tokens = tokens(text, |_| {}).skip_while(|tok| tok.get().unwrap() != Token::Eof);
+        let eof = tokens.next().unwrap();
+        assert_eq!(eof.get().unwrap(), Token::Eof);
+        assert_eq!(eof.fragment(), b"");
+        assert_eq!(eof.position(), (1, text.len() as u32 + 1));
+        assert!(tokens.next().is_none());
     }
 }

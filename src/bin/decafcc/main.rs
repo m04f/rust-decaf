@@ -1,8 +1,9 @@
 use std::io::stderr;
 
-use crate::lexer::Lexer;
+use crate::{lexer::Lexer, parser::Parser};
 
 mod lexer;
+mod parser;
 
 trait App {
     fn run(
@@ -22,13 +23,14 @@ pub enum ExitStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Lexer,
+    Parser,
 }
 
 struct Config {
     mode: Option<Mode>,
     input_file: Option<String>,
     output_file: Option<String>,
-    stderr: Option<String>,
+    // stderr: Option<String>,
 }
 
 impl Config {
@@ -37,7 +39,7 @@ impl Config {
             mode: None,
             input_file: None,
             output_file: None,
-            stderr: None,
+            // stderr: None,
         }
     }
 
@@ -45,6 +47,7 @@ impl Config {
         match mode.as_ref() {
             "scan" => Some(Mode::Lexer),
             "scanner" => Some(Mode::Lexer),
+            "parser" => Some(Mode::Parser),
             _ => None,
         }
     }
@@ -97,6 +100,11 @@ fn main() {
             &mut stderr,
             config.input_file.unwrap_or("/dev/stdin".to_string()),
         ),
+        Some(Mode::Parser) => Parser::run(
+            &mut output_stream,
+            &mut stderr,
+            config.input_file.unwrap_or("/dev/stdin".to_string()),
+            ),
         None => {
             println!("No mode specified");
             ExitStatus::Fail

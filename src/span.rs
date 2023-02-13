@@ -1,14 +1,29 @@
 use core::ops::{Range, RangeFrom, RangeTo};
+use std::fmt::Debug;
 use std::ops::RangeFull;
 use std::{iter::Copied, ops::Index, slice};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Spanned<'a, T: Clone> {
-    span: Span<'a>,
-    data: T,
+#[derive(PartialEq, Eq, Debug)]
+pub struct Spanned<'a, T> {
+    pub span: Span<'a>,
+    pub data: T,
 }
 
-impl<'a, T: Clone> Spanned<'a, T> {
+impl<T> Clone for Spanned<'_, T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            span: self.span,
+            data: self.data.clone(),
+        }
+    }
+}
+
+impl<T> Copy for Spanned<'_, T> where T: Copy + Clone {}
+
+impl<'a, T> Spanned<'a, T> {
     fn new(span: Span<'a>, data: T) -> Self {
         Self { span, data }
     }
@@ -28,7 +43,7 @@ impl<'a, T: Clone> Spanned<'a, T> {
         self.data
     }
 
-    pub fn map<O: Clone, F: Fn(T) -> O>(self, f: F) -> Spanned<'a, O> {
+    pub fn map<O, F: Fn(T) -> O>(self, f: F) -> Spanned<'a, O> {
         Spanned::new(self.span, f(self.data))
     }
 
@@ -47,9 +62,13 @@ impl<'a, T: Clone> Spanned<'a, T> {
     pub const fn position(&self) -> (u32, u32) {
         self.span().position()
     }
+
+    pub fn into_parts(self) -> (T, Span<'a>) {
+        (self.data, self.span)
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Span<'a> {
     /// the part of the document spanned.
     source: &'a [u8],
@@ -57,6 +76,12 @@ pub struct Span<'a> {
     line: u32,
     /// one indexed column number
     column: u32,
+}
+
+impl<'a> Debug for Span<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        String::from_utf8_lossy(&self.source().to_vec()).fmt(f)
+    }
 }
 
 impl const Default for Span<'_> {
@@ -168,7 +193,7 @@ impl<'a> Span<'a> {
         })
     }
 
-    pub fn into_spanned<T: Clone>(self, data: T) -> Spanned<'a, T> {
+    pub fn into_spanned<T>(self, data: T) -> Spanned<'a, T> {
         Spanned::new(self, data)
     }
 
@@ -198,6 +223,21 @@ impl<'a> Span<'a> {
             .iter()
             .position(pred)
             .map(|ind| self.split_at(ind))
+    }
+
+    /// merges two spans into one,
+    /// * Assumes that other comes after self.
+    /// * Assumes that both spans are in the same slice.
+    /// * no checks are performed to ensure that the above assumptions are true.
+    /// TODO: we can check them by adding an `offset` field that holds the span's offset from the
+    /// original slice. we can also make the span more compact by using a 32-bit offset (that can
+    /// work with upto 4GB documents) and set the position to be (u16, u16) instead.
+    pub fn merge(self, other: Self) -> Self {
+        let beg = self.source().as_ptr();
+        // split it at the end, we get a slice that is of length 0
+        let end = other.source().split_at(other.len()).1;
+        let slice = unsafe { slice::from_raw_parts(beg, end.as_ptr() as usize - beg as usize) };
+        Self::from_position(slice, (self.line(), self.column()))
     }
 }
 
@@ -233,6 +273,12 @@ impl Index<RangeTo<usize>> for Span<'_> {
     type Output = [u8];
     fn index(&self, index: RangeTo<usize>) -> &[u8] {
         &self.source()[index]
+    }
+}
+
+impl<'a> AsRef<[u8]> for Span<'a> {
+    fn as_ref(&self) -> &[u8] {
+        self.source()
     }
 }
 
@@ -298,5 +344,62 @@ mod test {
         assert_eq!(s2.source(), b" ghijk");
         assert_eq!(s2.line(), 1);
         assert_eq!(s2.column(), 7);
+    }
+
+    #[test]
+    fn merge() {
+        // consecutive slices
+        {
+            let text = b"abcdefghijklmnopqrstuvwxyz";
+            let span = Span::new(text);
+            let (s1, s2) = span.split_at(10);
+            let s3 = s1.merge(s2);
+            assert_eq!(s3.source(), text);
+        }
+
+        // empty slice
+        {
+            let text = b"abcdefghijklmnopqrstuvwxyz";
+            let span = Span::new(text);
+            let (s1, s2) = span.split_at(0);
+            assert_eq!(s1.source(), b"");
+            {
+                let s3 = s1.merge(s2);
+                assert_eq!(s3.source(), text);
+            }
+            {
+                let (s3, s4) = s2.split_at(10);
+                {
+                    let s5 = s1.merge(s3);
+                    assert_eq!(s5.source(), text[..10].as_ref());
+                }
+                {
+                    let s6 = s1.merge(s4);
+                    assert_eq!(s6.source(), text);
+                }
+            }
+        }
+        {
+            let text = b"abcdefghijklmnopqrstuvwxyz";
+            let span = Span::new(text);
+            let (s1, s2) = span.split_at(span.len());
+            assert_eq!(s2.source(), b"");
+            assert_eq!(s1.source(), text);
+            {
+                let s3 = s1.merge(s2);
+                assert_eq!(s3.source(), text);
+            }
+            {
+                let (s3, s4) = s1.split_at(10);
+                {
+                    let s5 = s3.merge(s2);
+                    assert_eq!(s5.source(), text);
+                }
+                {
+                    let s6 = s4.merge(s2);
+                    assert_eq!(s6.source(), text[10..].as_ref());
+                }
+            }
+        }
     }
 }
