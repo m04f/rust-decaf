@@ -872,6 +872,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             self.report_error(ExpectedAssignExpr);
             Dirty
         })?;
+        _ = self.consume(Token::RightParen).map_err(|_| {
+            let error = self.expected_token(Token::RightParen);
+            self.report_error(error);
+        });
         Ok((assign, expr, update))
     }
 
