@@ -417,6 +417,7 @@ fn multiple_params() {
             Var::scalar(Type::Int, "c".into()),
         ]
     );
+    assert!(parser.finised());
 }
 
 #[test]

@@ -315,6 +315,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                         }
                     }))
                     .collect::<Vec<_>>();
+                _ = self.consume(Token::RightParen).map_err(|_| {
+                    let error = ExpectedMatching(Token::LeftParen, Token::RightParen);
+                    self.report_error(error);
+                });
                 Ok(params)
             }
             Err(_) => {
