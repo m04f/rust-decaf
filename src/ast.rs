@@ -483,6 +483,25 @@ impl Type {
 #[derive(Debug, Clone)]
 pub struct Identifier<S>(S);
 
+impl<T, U> PartialEq<Identifier<U>> for Identifier<T>
+where
+    T: AsRef<[u8]>,
+    U: AsRef<[u8]>,
+{
+    fn eq(&self, other: &Identifier<U>) -> bool {
+        self.0.as_ref() == other.0.as_ref()
+    }
+}
+
+impl<S> From<S> for Identifier<S>
+where
+    S: AsRef<[u8]>,
+{
+    fn from(s: S) -> Self {
+        Self(s)
+    }
+}
+
 impl<S> Identifier<S> {
     pub fn from_span(span: S) -> Self {
         Self(span)
@@ -525,6 +544,27 @@ pub enum Var<S> {
         ty: Type,
         ident: Identifier<S>,
     },
+}
+
+impl<T, U> PartialEq<Var<U>> for Var<T>
+where
+    T: AsRef<[u8]>,
+    U: AsRef<[u8]>,
+{
+    fn eq(&self, other: &Var<U>) -> bool {
+        match (self, other) {
+            (
+                Self::Array { ident, size, .. },
+                Var::Array {
+                    ident: ident2,
+                    size: size2,
+                    ..
+                },
+            ) => ident == ident2 && size == size2,
+            (Self::Scalar { ident, .. }, Var::Scalar { ident: ident2, .. }) => ident == ident2,
+            _ => false,
+        }
+    }
 }
 
 impl<S> Var<S> {

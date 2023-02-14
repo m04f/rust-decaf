@@ -404,3 +404,17 @@ fn double_neg() {
         ),
     );
 }
+
+#[test]
+fn multiple_params() {
+    use crate::ast::*;
+    let mut parser = parser!("(int b, int c)");
+    let params = parser.func_params().unwrap();
+assert_eq!(
+        params,
+        vec![
+            Var::scalar(Type::Int, "b".into()),
+            Var::scalar(Type::Int, "c".into()),
+        ]
+    );
+}

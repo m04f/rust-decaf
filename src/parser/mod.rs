@@ -304,18 +304,30 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     fn func_params(&mut self) -> Result<Vec<Var<'a>>> {
         use std::iter;
         self.consume(Token::LeftParen)?;
-        let params = iter::from_fn(|| match self.func_param() {
-            Ok(res) => Some(res),
-            Err(Clean) => None,
-            // maybe we want to change this
-            Err(Dirty) => None,
-        })
-        .collect::<Vec<_>>();
-        _ = self.consume(Token::RightParen).map_err(|_| {
-            let error = self.expected_token(Token::RightParen);
-            self.report_error(error);
-        });
-        Ok(params)
+        let first_param = self.func_param();
+        match first_param {
+            Ok(param) => {
+                let params = iter::once(param)
+                    .chain(iter::from_fn(|| {
+                        self.consume(Token::Comma).ok()?;
+                        match self.func_param() {
+                            Ok(res) => Some(res),
+                            Err(Clean) => None,
+                            // maybe we want to change this
+                            Err(Dirty) => None,
+                        }
+                    }))
+                    .collect::<Vec<_>>();
+                Ok(params)
+            }
+            Err(_) => {
+                _ = self.consume(Token::RightParen).map_err(|_| {
+                    let error = ExpectedMatching(Token::LeftParen, Token::RightParen);
+                    self.report_error(error);
+                });
+                Ok(vec![])
+            }
+        }
     }
 
     fn function_params_body(&mut self) -> Result<(Vec<Var<'a>>, Block<'a>)> {
@@ -941,8 +953,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    pub fn doc_elems(&mut self) -> impl Iterator<Item = DocElem<'a>> + '_
-    {
+    pub fn doc_elems(&mut self) -> impl Iterator<Item = DocElem<'a>> + '_ {
         use std::iter;
         iter::from_fn(move || {
             self.doc_elem()
