@@ -410,11 +410,32 @@ fn multiple_params() {
     use crate::ast::*;
     let mut parser = parser!("(int b, int c)");
     let params = parser.func_params().unwrap();
-assert_eq!(
+    assert_eq!(
         params,
         vec![
             Var::scalar(Type::Int, "b".into()),
             Var::scalar(Type::Int, "c".into()),
         ]
     );
+}
+
+#[test]
+fn index_expr() {
+    use crate::ast::*;
+    let mut parser = parser!("a[b+2]");
+    let expr = parser.expr().unwrap();
+    assert_eq!(
+        expr,
+        Expr::index(
+            Identifier::from_span("a").into(),
+            Expr::binop(
+                Identifier::from_span("b").into(),
+                Op::Add,
+                IntLiteral::from_decimal("2").into(),
+                ""
+            ),
+            ""
+        )
+    );
+    assert!(parser.finised());
 }

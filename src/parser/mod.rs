@@ -247,14 +247,11 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })?;
             Ok(Or::First(Call::new(ident, args, self.end_span(beg))))
         } else if self.peek() == Token::SquareLeft {
-            self.bump();
-            let index = self.expr().map_err(|_| {
-                self.report_error(ExpectedExpression);
-            });
+            let index = self.opt_index();
             if let Ok(index) = index {
                 Ok(Or::Second(Loc::with_offset(
                     ident,
-                    index,
+                    index.unwrap(),
                     self.end_span(beg),
                 )))
             } else {
