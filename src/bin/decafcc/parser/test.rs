@@ -20,4 +20,25 @@ mod legal {
     test_legal!(legal_04, 04);
     test_legal!(legal_05, 05);
     test_legal!(legal_06, 06);
+    test_legal!(legal_07, 07);
+    test_legal!(legal_08, 08);
+    test_legal!(legal_09, 09);
+    test_legal!(legal_10, 10);
+    test_legal!(legal_11, 11);
+    test_legal!(legal_12, 12);
+    test_legal!(legal_13, 13);
+    test_legal!(legal_14, 14);
+    test_legal!(legal_15, 15);
+    test_legal!(legal_16, 16);
+    test_legal!(legal_17, 17);
+    test_legal!(legal_18, 18);
+    test_legal!(legal_19, 19);
+    test_legal!(legal_20, 20);
+    test_legal!(legal_21, 21);
+    test_legal!(legal_22, 22);
+    test_legal!(legal_23, 23);
+    test_legal!(legal_24, 24);
+    test_legal!(legal_25, 25);
+    test_legal!(legal_26, 26);
+    test_legal!(legal_27, 27);
 }
