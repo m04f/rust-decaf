@@ -6,6 +6,8 @@
 #![feature(is_some_and)]
 #![feature(type_alias_impl_trait)]
 #![feature(unboxed_closures)]
+#![feature(try_trait_v2)]
+#![feature(if_let_guard)]
 
 pub mod log;
 pub mod span;

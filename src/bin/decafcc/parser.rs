@@ -3,6 +3,9 @@ use std::fs::read_to_string;
 use crate::*;
 use dcfrs::lexer::*;
 
+#[cfg(test)]
+mod test;
+
 pub struct Parser;
 
 impl App for Parser {
@@ -12,12 +15,15 @@ impl App for Parser {
         input_file: String,
     ) -> ExitStatus {
         let text = read_to_string(input_file).unwrap();
-        dcfrs::parser::Parser::new(
-            tokens(text.as_bytes(), |_| panic!()).map(|s| s.map(|t| t.unwrap())),
-            |_| panic!(),
-        )
-        .doc_elems()
-        .for_each(|e| println!("{e:#?}"));
-        ExitStatus::Success
+        let mut parser = dcfrs::parser::Parser::new(
+            tokens(text.as_bytes(), |e| panic!("{e:?}")).map(|s| s.map(|t| t.unwrap())),
+            |e| panic!("{e:?}"),
+        );
+        parser.doc_elems().for_each(|e| println!("{e:#?}"));
+        if parser.finised() {
+            ExitStatus::Success
+        } else {
+            ExitStatus::Fail
+        }
     }
 }

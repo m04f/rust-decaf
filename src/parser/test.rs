@@ -4,9 +4,7 @@ macro_rules! parser {
         use crate::parser::Parser;
         println!("parsing: {}", $text);
         Parser::new(
-            tokens($text.as_bytes(), |_| {})
-                .map(|res| res.map(|res| res.unwrap()))
-                .inspect(|r| println!("{r:?}")),
+            tokens($text.as_bytes(), |_| {}).map(|res| res.map(|res| res.unwrap())),
             |e| panic!("unexpected error: {e:?}"),
         )
     }};
@@ -222,7 +220,7 @@ mod arb_ast {
                     if expr.is_binop() {
                         format!("-({})", expr.to_string())
                     } else {
-                        format!("-{}", expr.to_string())
+                        format!("- {}", expr.to_string())
                     }
                 }
                 Not(.., expr) => {
@@ -242,7 +240,7 @@ mod arb_ast {
         fn test_expr_to_string(arb_expr in expr()) {
             let expr_string = arb_expr.to_string();
             let mut parser = parser!(expr_string);
-            let parsed = parser.expr().unwrap_parsed();
+            let parsed = parser.expr().unwrap();
             prop_assert_eq!(arb_expr, parsed);
             prop_assert!(parser.finised());
         }
@@ -256,26 +254,26 @@ mod trophies {
     fn literals() {
         let mut parser = parser!("1");
         assert_eq!(
-            parser.expr().unwrap_parsed(),
+            parser.expr().unwrap(),
             Expr::from(IntLiteral::from_decimal("1"))
         );
 
         let mut parser = parser!("0x1");
         assert_eq!(
-            parser.expr().unwrap_parsed(),
+            parser.expr().unwrap(),
             Expr::from(IntLiteral::from_hex("0x1"))
         );
 
         let mut parser = parser!("'c'");
         assert_eq!(
-            parser.expr().unwrap_parsed(),
+            parser.expr().unwrap(),
             Expr::from(CharLiteral::from_spanned(
                 Span::new(b"'c'").into_spanned(b'c')
             ))
         );
         let mut parser = parser!("false");
         assert_eq!(
-            parser.expr().unwrap_parsed(),
+            parser.expr().unwrap(),
             Expr::from(BoolLiteral::from_spanned(
                 Span::new(b"false").into_spanned(false)
             ))
@@ -283,6 +281,7 @@ mod trophies {
     }
 }
 
+use crate::ast::{ELiteral, Expr};
 use crate::lexer::Token::*;
 use crate::parser::Error::*;
 
@@ -295,8 +294,7 @@ fn bad_call_stmt_with_output() {
     let stmt = parser.stmt();
     println!("{:?}", stmt);
     assert!(parser.finised());
-    assert!(stmt.has_output());
-    assert!(stmt.has_error());
+    assert!(stmt.is_ok());
     let mut errors = vec![
         ExpectedMatching(LeftParen, RightParen),
         Expected(Eof, Semicolon),
@@ -307,142 +305,102 @@ fn bad_call_stmt_with_output() {
     });
     let stmt = parser.stmt();
     assert!(parser.finised());
-    assert!(stmt.has_output());
-    assert!(stmt.has_error());
-    // TODO: check the returned statment
+    assert!(stmt.is_ok());
 }
 
 #[test]
 fn bool_decl() {
     let mut parser = parser!("bool a;");
-    parser.field_or_function_decl().unwrap_parsed();
+    parser.field_or_function_decl().unwrap();
 }
 
 #[test]
 fn multi_decl() {
     let mut parser = parser!(r#" int a, b, c;"#);
-    parser.field_or_function_decl().unwrap_parsed();
+    parser.field_or_function_decl().unwrap();
     assert!(parser.finised());
 }
 
-// mod legal {
-//     mod expr {
-//         use crate::ast::*;
-//         use crate::parser::Parser;
-//         use crate::span::*;
-//         use Expr::*;
-//         use Op::*;
-//
-//         macro_rules! parser {
-//             ($text:expr) => {{
-//                 use crate::lexer::tokens;
-//                 Parser::new(
-//                     tokens($text.as_bytes(), |_| {})
-//                         .map(|res| res.map(|res| res.unwrap()))
-//                         .inspect(|res| println!("{:?}", res)),
-//                     |e| panic!("unexpected error: {e:?}"),
-//                 )
-//             }};
-//         }
-//
-//         fn id(id: &str) -> Identifier {
-//             Identifier::from_span(Span::new(id.as_bytes()))
-//         }
-//
-//         macro_rules! id {
-//             ($id:ident) => {
-//                 id(stringify!($id)).into()
-//             };
-//         }
-//
-//         macro_rules! parse_expr {
-//             ($text:expr) => {{
-//                 let mut parser = parser!($text);
-//                 parser.expr().unwrap_parsed()
-//             }};
-//         }
-//
-//         macro_rules! e1 {
-//             ($a:ident + $b:ident) => {
-//                 Expr::binop(id!($a), Add, id!($b), Span::new(b""))
-//             };
-//             ($a:ident - $b:ident) => {
-//                 Expr::binop(id!($a), Sub, id!($b), Span::new(b""))
-//             };
-//             ($a:ident * $b:ident) => {
-//                 Expr::binop(id!($a), Mul, id!($b), Span::new(b""))
-//             };
-//             ($a:ident / $b:ident) => {
-//                 Expr::binop(id!($a), Div, id!($b), Span::new(b""))
-//             };
-//             ($a:ident % $b:ident) => {
-//                 Expr::binop(id!($a), Mod, id!($b), Span::new(b""))
-//             };
-//             ($a:ident == $b:ident) => {
-//                 Expr::binop(id!($a), Equal, id!($b), Span::new(b""))
-//             };
-//             ($a:ident != $b:ident) => {
-//                 Expr::binop(id!($a), NotEqual, id!($b), Span::new(b""))
-//             };
-//             ($a:ident < $b:ident) => {
-//                 Expr::binop(id!($a), Less, id!($b), Span::new(b""))
-//             };
-//             ($a:ident > $b:ident) => {
-//                 Expr::binop(id!($a), Greater, id!($b), Span::new(b""))
-//             };
-//             ($a:ident <= $b:ident) => {
-//                 Expr::binop(id!($a), LessEqual, id!($b), Span::new(b""))
-//             };
-//             ($a:ident >= $b:ident) => {
-//                 Expr::binop(id!($a), GreaterEqual, id!($b), Span::new(b""))
-//             };
-//             ($a:ident && $b:ident) => {
-//                 Expr::binop(id!($a), And, id!($b), Span::new(b""))
-//             };
-//             ($a:ident || $b:ident) => {
-//                 Expr::binop(id!($a), Or, id!($b), Span::new(b""))
-//             };
-//         }
-//
-//         macro_rules! build_test {
-//             ($a:ident, $sym:tt, $b:ident, $name:ident) => {
-//                 #[test]
-//                 fn $name() {
-//                     let expected = e1!($a $sym $b);
-//                     let exp = stringify!($a $sym $b);
-//                     let actual = parse_expr!(exp);
-//                     assert_eq!(expected, actual);
-//                 }
-//             };
-//         }
-//         macro_rules! test_single {
-//             ($a:ident * $b:ident) => { build_test!($a, *, $b, mul_single); };
-//             ($a:ident / $b:ident) => { build_test!($a, /, $b, div_single); };
-//             ($a:ident + $b:ident) => { build_test!($a, +, $b, add_single); };
-//             ($a:ident - $b:ident) => { build_test!($a, -, $b, sub_single); };
-//             ($a:ident % $b:ident) => { build_test!($a, %, $b, mod_single); };
-//             ($a:ident || $b:ident) => { build_test!($a, ||, $b, or_single); };
-//             ($a:ident && $b:ident) => { build_test!($a, &&, $b, and_single); };
-//             ($a:ident == $b:ident) => { build_test!($a, ==, $b, equal_single); };
-//             ($a:ident != $b:ident) => { build_test!($a, !=, $b, notequal_single); };
-//             ($a:ident <= $b:ident) => { build_test!($a, <=, $b, less_euqal_single); };
-//             ($a:ident >= $b:ident) => { build_test!($a, >=, $b, greater_equal_single); };
-//             ($a:ident > $b:ident) => { build_test!($a, >, $b, greater_single); };
-//             ($a:ident < $b:ident) => { build_test!($a, <, $b, less_single); };
-//         }
-//
-//         test_single!(a * b);
-//         test_single!(a / b);
-//         test_single!(a + b);
-//         test_single!(a - b);
-//         test_single!(a % b);
-//         test_single!(a || b);
-//         test_single!(a && b);
-//         test_single!(a == b);
-//         test_single!(a != b);
-//         test_single!(a <= b);
-//         test_single!(a >= b);
-//         test_single!(a > b);
-//         test_single!(a < b);
-//     }
-// }
+#[test]
+fn not_expr() {
+    use crate::ast::*;
+    let mut parser = parser!("!0");
+    let expr = parser.expr().unwrap();
+    assert_eq!(expr, Expr::not(IntLiteral::from_decimal("0").into(), ""))
+}
+
+#[test]
+fn neg_expr() {
+    use crate::ast::*;
+    let mut parser = parser!("-0");
+    let expr = parser.expr().unwrap();
+    assert_eq!(expr, Expr::neg(IntLiteral::from_decimal("0").into(), ""))
+}
+
+#[test]
+fn mul_expr() {
+    use crate::ast::*;
+    let mut parser = parser!("a * b");
+    let expr = parser.expr().unwrap();
+    assert_eq!(
+        expr,
+        Expr::binop(
+            Identifier::from_span("a").into(),
+            Op::Mul,
+            Identifier::from_span("b").into(),
+            ""
+        )
+    );
+}
+
+#[test]
+fn add_expr() {
+    use crate::ast::*;
+    let mut parser = parser!("a + b");
+    let expr = parser.expr().unwrap();
+    assert_eq!(
+        expr,
+        Expr::binop(
+            Identifier::from_span("a").into(),
+            Op::Add,
+            Identifier::from_span("b").into(),
+            ""
+        )
+    );
+}
+
+#[test]
+fn basic_prec_expr() {
+    use crate::ast::*;
+    let mut parser = parser!("a + b * c");
+    let expr = parser.expr().unwrap();
+    assert_eq!(
+        expr,
+        Expr::binop(
+            Identifier::from_span("a").into(),
+            Op::Add,
+            Expr::binop(
+                Identifier::from_span("b").into(),
+                Op::Mul,
+                Identifier::from_span("c").into(),
+                ""
+            ),
+            ""
+        )
+    );
+}
+
+#[test]
+fn double_neg() {
+    use crate::ast::*;
+    let mut parser = parser!("- -0");
+    let expr = parser.expr();
+    let expr = expr.unwrap();
+    assert_eq!(
+        expr,
+        Expr::neg(
+            Expr::neg(IntLiteral::from_decimal("0").into(), "").into(),
+            ""
+        ),
+    );
+}

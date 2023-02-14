@@ -86,6 +86,16 @@ impl<S> BlockBuilder<S> {
     }
 }
 
+impl<S> FromIterator<BlockElem<S>> for Block<S> {
+    fn from_iter<I: IntoIterator<Item = BlockElem<S>>>(iter: I) -> Self {
+        let mut builder = BlockBuilder::new();
+        for elem in iter {
+            builder.add(elem);
+        }
+        builder.build()
+    }
+}
+
 /// a literal that can be used as an expression
 #[derive(Debug, Clone)]
 pub enum ELiteral<S> {
@@ -288,6 +298,12 @@ impl<S> From<BoolLiteral<S>> for Expr<S> {
     }
 }
 
+impl<S> From<Identifier<S>> for Expr<S> {
+    fn from(value: Identifier<S>) -> Self {
+        Expr::Scalar(value)
+    }
+}
+
 impl<T, U> PartialEq<Expr<U>> for Expr<T>
 where
     U: AsRef<[u8]>,
@@ -481,12 +497,6 @@ impl<'a> Identifier<Span<'a>> {
     }
 }
 
-impl<'a> From<Identifier<Span<'a>>> for Expr<Span<'a>> {
-    fn from(ident: Identifier<Span<'a>>) -> Self {
-        Self::Scalar(ident)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Import<S>(S, Identifier<S>);
 
@@ -508,6 +518,8 @@ pub enum Var<S> {
         ty: Type,
         ident: Identifier<S>,
         size: IntLiteral<S>,
+        // we do not need to record spans for identifiers
+        span: S,
     },
     Scalar {
         ty: Type,
@@ -516,14 +528,19 @@ pub enum Var<S> {
 }
 
 impl<S> Var<S> {
-    pub fn new(ty: Type, ident: Identifier<S>, size: Option<IntLiteral<S>>) -> Self {
+    pub fn new(ty: Type, ident: Identifier<S>, size: Option<IntLiteral<S>>, span: S) -> Self {
         match size {
-            Some(size) => Self::array(ty, ident, size),
+            Some(size) => Self::array(ty, ident, size, span),
             None => Self::scalar(ty, ident),
         }
     }
-    pub fn array(ty: Type, ident: Identifier<S>, size: IntLiteral<S>) -> Self {
-        Self::Array { ty, ident, size }
+    pub fn array(ty: Type, ident: Identifier<S>, size: IntLiteral<S>, span: S) -> Self {
+        Self::Array {
+            ty,
+            ident,
+            size,
+            span,
+        }
     }
     pub fn scalar(ty: Type, ident: Identifier<S>) -> Self {
         Self::Scalar { ty, ident }
@@ -536,15 +553,23 @@ pub struct Function<S> {
     args: Vec<Var<S>>,
     body: Block<S>,
     ret: Option<Type>,
+    span: S,
 }
 
 impl<S> Function<S> {
-    pub fn new(name: Identifier<S>, args: Vec<Var<S>>, body: Block<S>, ret: Option<Type>) -> Self {
+    pub fn new(
+        name: Identifier<S>,
+        args: Vec<Var<S>>,
+        body: Block<S>,
+        ret: Option<Type>,
+        span: S,
+    ) -> Self {
         Self {
             name,
             args,
             body,
             ret,
+            span,
         }
     }
 }
