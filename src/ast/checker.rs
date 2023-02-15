@@ -97,11 +97,8 @@ impl<S: Default + Clone> BlockChecker<S> {
                     self.decls_finished = true;
                     self.decls_next_pos = Some(stmt.span().clone());
                 }
-                self.decls_next_pos = None;
             }
-            BlockElem::Func(..) => {
-                self.decls_next_pos = None;
-            }
+            BlockElem::Func(..) => {}
         }
     }
 }
