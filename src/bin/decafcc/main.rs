@@ -48,6 +48,7 @@ impl Config {
             "scan" => Some(Mode::Lexer),
             "scanner" => Some(Mode::Lexer),
             "parser" => Some(Mode::Parser),
+            "parse" => Some(Mode::Parser),
             _ => None,
         }
     }
@@ -104,7 +105,7 @@ fn main() {
             &mut output_stream,
             &mut stderr,
             config.input_file.unwrap_or("/dev/stdin".to_string()),
-            ),
+        ),
         None => {
             println!("No mode specified");
             ExitStatus::Fail

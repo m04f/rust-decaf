@@ -68,7 +68,7 @@ impl<'a, T> Spanned<'a, T> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span<'a> {
     /// the part of the document spanned.
     source: &'a [u8],
@@ -81,16 +81,6 @@ pub struct Span<'a> {
 impl<'a> Debug for Span<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         String::from_utf8_lossy(&self.source().to_vec()).fmt(f)
-    }
-}
-
-impl const Default for Span<'_> {
-    fn default() -> Self {
-        Self {
-            source: <&[u8]>::default(),
-            line: u32::default(),
-            column: u32::default(),
-        }
     }
 }
 

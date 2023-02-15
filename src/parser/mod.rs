@@ -22,6 +22,7 @@ pub enum Error<'a> {
     LenNoArg,
     ExpectedMatching(Token, Token),
     ExpectedAssignExpr,
+    Unexpected(Token),
     Ast(AstError<Span<'a>>),
 }
 
@@ -110,6 +111,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     pub fn finised(&mut self) -> bool {
         // println!("{:?}", self.peek());
         self.peek() == Token::Eof
+    }
+
+    pub fn found_errors(&self) -> bool {
+        self.error
     }
 
     /// returns the next token and advances the iterator.
@@ -687,12 +692,36 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         Ok(iter::from_fn(|| {
             // if it returns an error then we did not finish the block yet so we can continue
             self.consume(Token::CurlyRight).err()?;
-            self.block_elem().ok().map(|elem| {
+            match self.block_elem().map(|elem| {
                 block_checker.check(&elem, |e| {
                     self.report_error(Ast(e));
                 });
                 elem
-            })
+            }) {
+                Ok(elem) => Some(elem),
+                Err(_) => {
+                    // there were no curly bracket and we could not parse anything. so we start to
+                    // recover from this by consuming all tokens to the next curly brakcket.
+                    self.report_error(ExpectedMatching(Token::CurlyLeft, Token::CurlyRight));
+                    let mut depth = 0;
+                    loop {
+                        match self.peek() {
+                            Token::CurlyLeft => depth += 1,
+                            Token::CurlyRight => {
+                                if depth == 0 {
+                                    break;
+                                } else {
+                                    depth -= 1;
+                                }
+                            }
+                            Token::Eof => break,
+                            _ => {}
+                        }
+                        self.bump();
+                    }
+                    None
+                }
+            }
         })
         .fold(Block::new(), |mut block, elem| {
             block.add(elem);
