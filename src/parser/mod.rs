@@ -311,9 +311,11 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                         self.consume(Token::Comma).ok()?;
                         match self.func_param() {
                             Ok(res) => Some(res),
-                            Err(Clean) => None,
-                            // maybe we want to change this
-                            Err(Dirty) => None,
+                            Err(_) => {
+                                let error = Unexpected(Token::Comma);
+                                self.report_error(error);
+                                None
+                            }
                         }
                     }))
                     .collect::<Vec<_>>();
