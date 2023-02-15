@@ -461,7 +461,11 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                         self.bump();
                         Ok(Or::First(vec![Var::scalar(ty, ident)]))
                     }
-                    _ => Err(Dirty),
+                    _ => {
+                        let error = self.expected_token(Token::Semicolon);
+                        self.report_error(error);
+                        Ok(Or::First(vec![Var::scalar(ty, ident)]))
+                    }
                 }
             }
             _ => Err(Clean),

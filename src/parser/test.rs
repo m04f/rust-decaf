@@ -440,3 +440,17 @@ fn index_expr() {
     );
     assert!(parser.finised());
 }
+
+#[test]
+fn no_semicolon_decl() {
+    use super::Or;
+    use crate::ast::*;
+    let mut errors = vec![Expected(Eof, Semicolon)].into_iter();
+    let mut parser = parser!("int a", |e| assert_eq!(*e.get(), errors.next().unwrap()));
+    let decl = parser.field_or_function_decl().unwrap();
+    if let Or::First(var) = decl {
+        assert_eq!(var, vec![Var::scalar(Type::Int, "a".into())]);
+    } else {
+        panic!()
+    }
+}
