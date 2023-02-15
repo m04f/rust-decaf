@@ -4,13 +4,9 @@ mod checker;
 
 pub use checker::Error;
 
-#[cfg(test)]
-use proptest_derive::Arbitrary;
-
 pub use self::checker::*;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[cfg_attr(test, derive(Arbitrary))]
 pub enum Op {
     Add,
     Sub,
@@ -448,7 +444,6 @@ impl<S> Expr<S> {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, derive(Arbitrary))]
 pub enum Type {
     Bool,
     Int,
