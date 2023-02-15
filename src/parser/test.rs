@@ -454,3 +454,19 @@ fn no_semicolon_decl() {
         panic!()
     }
 }
+
+#[test]
+fn decl_stmt_decl() {
+    use crate::ast::Error::*;
+    let mut err_count = 0;
+    let mut parser = parser!(
+        "{ int a; a = a; int b; }",
+        |e| if let Ast(MoveDeclTo { .. }) = e.get() {
+            err_count += 1;
+        } else {
+            panic!()
+        }
+    );
+    parser.block().unwrap();
+    assert!(err_count == 1);
+}
