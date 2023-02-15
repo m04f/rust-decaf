@@ -38,7 +38,6 @@ impl StmtChecker {
     pub fn check<S: Clone, F: FnMut(Error<S>)>(stmt: &Stmt<S>, mut callback: F) {
         let check_nested_expr = |e: &Expr<S>, ctx: Context, mut callback: F| {
             if let Expr::Nested(..) = e {
-                ()
             } else {
                 callback(Error::WrapExpr {
                     span: e.span().clone(),
@@ -100,6 +99,12 @@ impl<S: Default + Clone> BlockChecker<S> {
             }
             BlockElem::Func(..) => {}
         }
+    }
+}
+
+impl<S: Clone> Default for RootChecker<S> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

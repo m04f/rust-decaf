@@ -79,7 +79,7 @@ pub enum Token {
 
 pub type Result = std::result::Result<Token, Error>;
 
-fn get_string_errors<'a>(span: Span<'a>) -> impl Iterator<Item = Spanned<Error>> + 'a {
+fn get_string_errors(span: Span) -> impl Iterator<Item = Spanned<Error>> + '_ {
     let mut escape_next = true;
     let mut error_checker = move |s: Span| {
         let c = s[0];
@@ -90,17 +90,15 @@ fn get_string_errors<'a>(span: Span<'a>) -> impl Iterator<Item = Spanned<Error>>
             } else {
                 None
             }
+        } else if c == b'\\' {
+            println!("c: {}, escape_next: {}", c as char, escape_next);
+            escape_next = true;
+            println!("c: {}, escape_next: {}", c as char, escape_next);
+            None
+        } else if !is_dcf_char(c) {
+            Some(Error::InvalidChar(c))
         } else {
-            if c == b'\\' {
-                println!("c: {}, escape_next: {}", c as char, escape_next);
-                escape_next = true;
-                println!("c: {}, escape_next: {}", c as char, escape_next);
-                None
-            } else if !is_dcf_char(c) {
-                Some(Error::InvalidChar(c))
-            } else {
-                None
-            }
+            None
         }
     };
     let terminated = if span.ends_with(b"\\\"") || !span.ends_with(b"\"") {
@@ -115,7 +113,7 @@ fn get_string_errors<'a>(span: Span<'a>) -> impl Iterator<Item = Spanned<Error>>
 }
 
 fn symbol(span: Span) -> Option<(Spanned<Result>, Span)> {
-    assert!(span.len() >= 1);
+    assert!(!span.is_empty());
     {
         if span.len() > 1 {
             let (ch, rem) = span.split_at(2);
@@ -226,13 +224,13 @@ fn skip_block_comment(span: Span) -> Option<(Spanned<Result>, Span)> {
             .1
             .find(b"*/")
             .map(|i| span.split_at(i + 4).1);
-        if split.is_none() {
+        if let Some(split) = split {
+            Some((span.into_spanned(Ok(Token::BlockComment)), split))
+        } else {
             Some((
                 span.into_spanned(Err(Error::UnterminatedComment)),
                 span.split_at(span.len()).1,
             ))
-        } else {
-            Some((span.into_spanned(Ok(Token::BlockComment)), split.unwrap()))
         }
     } else {
         None
@@ -270,7 +268,7 @@ const fn is_escaped_char(c: u8) -> bool {
     matches!(c, b'n' | b't' | b'\\' | b'\'' | b'"')
 }
 
-fn escaped_char<'a>(span: Span<'a>) -> Spanned<Result> {
+fn escaped_char(span: Span) -> Spanned<Result> {
     assert!(span.len() == 4);
     assert!(span.starts_with(b"'\\"));
     if span[3] != b'\'' {
@@ -292,7 +290,7 @@ const fn is_dcf_char(c: u8) -> bool {
     matches!(c, 32..=33 | 35..=38 | 40..=91 | 93..=126)
 }
 
-fn dcf_char<'a>(span: Span<'a>) -> Spanned<Result> {
+fn dcf_char(span: Span) -> Spanned<Result> {
     assert!(span.len() == 3);
     let c = span[1];
     match c {
@@ -316,17 +314,15 @@ fn char_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
             let (lit, rem) = span.split_at(4);
             Some((escaped_char(lit), rem))
         }
+    } else if span[1] == b'\'' {
+        let (lit, rem) = span.split_at(2);
+        Some((lit.into_spanned(Err(Error::EmptyChar)), rem))
+    } else if span[2] != b'\'' {
+        let (lit, rem) = span.split_at(2);
+        Some((lit.into_spanned(Err(Error::UnterminatedChar)), rem))
     } else {
-        if span[1] == b'\'' {
-            let (lit, rem) = span.split_at(2);
-            Some((lit.into_spanned(Err(Error::EmptyChar)), rem))
-        } else if span[2] != b'\'' {
-            let (lit, rem) = span.split_at(2);
-            Some((lit.into_spanned(Err(Error::UnterminatedChar)), rem))
-        } else {
-            let (lit, rem) = span.split_at(3);
-            Some((dcf_char(lit), rem))
-        }
+        let (lit, rem) = span.split_at(3);
+        Some((dcf_char(lit), rem))
     }
 }
 
@@ -340,14 +336,12 @@ fn string_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
         let (lit, rem) = span.take_while(|c| {
             if break_next {
                 false
+            } else if *c == b'"' && last_char != b'\\' {
+                break_next = true;
+                true
             } else {
-                if *c == b'"' && last_char != b'\\' {
-                    break_next = true;
-                    true
-                } else {
-                    last_char = *c;
-                    true
-                }
+                last_char = *c;
+                true
             }
         });
 
@@ -363,10 +357,7 @@ fn string_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
 }
 
 fn is_ascii(c: &u8) -> bool {
-    match c {
-        32..=126 | b'\t' | b'\n' | b'\r' => true,
-        _ => false,
-    }
+    matches!(c, 32..=126 | b'\t' | b'\n' | b'\r')
 }
 
 /// collect non-ascii chars
@@ -383,7 +374,7 @@ fn non_ascii_graphic_chars(span: Span) -> Option<(Spanned<Result>, Span)> {
 
 fn token(span: Span) -> Option<(Spanned<Result>, Span)> {
     if span.is_empty() {
-        return None;
+        None
     } else {
         // the non_ascii_graphic_chars has to come before spaces
         // skip_spaces skips some of illegal chars
@@ -407,7 +398,7 @@ pub fn tokens<L: FnMut(Spanned<Error>)>(
     let mut s = Span::new(text);
     iter::from_fn(move || {
         if s.is_empty() {
-            return None;
+            None
         } else {
             let (tok, rem) = token(s)?;
             s = rem;
@@ -734,7 +725,7 @@ mod test {
         let text = b"=+-*/%&&||!<>?:";
         let mut span = Span::new(text);
         let symbols = iter::from_fn(move || {
-            if span.len() == 0 {
+            if span.is_empty() {
                 None
             } else {
                 let (l, r) = symbol(span).unwrap();

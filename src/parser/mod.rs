@@ -368,18 +368,18 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
 
     fn var_decl(&mut self, ty: Type) -> Result<Var<'a>> {
         let beg = self.start_span();
-        self.ident().and_then(|ident| {
-            Ok(self
+        self.ident().map(|ident| {
+            self
                 .opt_size()
                 .map(|size| Var::new(ty, ident.clone(), size, self.end_span(beg)))
-                .unwrap_or_else(|_| Var::scalar(ty, ident.clone())))
+                .unwrap_or_else(|_| Var::scalar(ty, ident.clone()))
         })
     }
 
     fn var_list(&mut self, ty: Type) -> Result<Vec<Var<'a>>> {
         use std::iter;
-        self.var_decl(ty).and_then(|first| {
-            Ok(iter::once(first)
+        self.var_decl(ty).map(|first| {
+            iter::once(first)
                 .chain(iter::from_fn(|| {
                     self.consume(Token::Comma).ok()?;
                     self.var_decl(ty)
@@ -387,9 +387,9 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                             let error = self.expected_token(Token::Identifier);
                             self.report_error(error);
                         })
-                        .ok()
+                    .ok()
                 }))
-                .collect())
+            .collect()
         })
     }
 
@@ -609,13 +609,13 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         self.consume(Token::LeftParen)?;
         let args = self
             .call_arg()
-            .and_then(|first| {
-                Ok(iter::once(first)
+            .map(|first| {
+                iter::once(first)
                     .chain(iter::from_fn(|| {
                         self.consume(Token::Comma).ok()?;
                         self.call_arg().ok()
                     }))
-                    .collect())
+                .collect()
             })
             .unwrap_or(vec![]);
         _ = self.consume(Token::RightParen).map_err(|_| {
@@ -775,7 +775,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     fn return_stmt(&mut self) -> Result<Stmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::Return)?;
-        let expr = self.expr().map(|expr| Some(expr)).or_else(|e| {
+        let expr = self.expr().map(Some).or_else(|e| {
             if e == Dirty {
                 Err(Dirty)
             } else {
@@ -1010,7 +1010,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                 if e == Dirty {
                     Err(Dirty)
                 } else {
-                    self.import().map(|import| DocElem::import(import))
+                    self.import().map(DocElem::import)
                 }
             })
     }

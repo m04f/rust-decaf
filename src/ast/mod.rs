@@ -680,7 +680,7 @@ impl<S: Default> Block<S> {
     pub fn add(&mut self, elem: BlockElem<S>) {
         match elem {
             BlockElem::Func(func) => self.funcs.push(func),
-            BlockElem::Decl { decls, span } => self.decls.extend(decls),
+            BlockElem::Decl { decls, .. } => self.decls.extend(decls),
             BlockElem::Stmt(stmt) => self.stmts.push(stmt),
         }
     }

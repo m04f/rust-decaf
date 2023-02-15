@@ -2,6 +2,12 @@ use std::io::{self, Write};
 
 pub struct Logger<S: Write>(S);
 
+impl Default for Logger<io::Stderr> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Logger<io::Stderr> {
     pub fn new() -> Self {
         Self(io::stderr())

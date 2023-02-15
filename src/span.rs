@@ -80,7 +80,7 @@ pub struct Span<'a> {
 
 impl<'a> Debug for Span<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        String::from_utf8_lossy(&self.source().to_vec()).fmt(f)
+        String::from_utf8_lossy(self.source()).fmt(f)
     }
 }
 
@@ -171,9 +171,9 @@ impl<'a> Span<'a> {
 
     pub fn spans<const SPAN_LENGTH: usize>(&self) -> impl Iterator<Item = Span<'a>> {
         use std::iter;
-        let mut cur = self.clone();
+        let mut cur = *self;
         iter::from_fn(move || {
-            if cur.len() == 0 {
+            if cur.is_empty() {
                 None
             } else {
                 let (l, r) = cur.split_at(SPAN_LENGTH);
@@ -255,7 +255,7 @@ impl Index<RangeFrom<usize>> for Span<'_> {
 impl Index<RangeFull> for Span<'_> {
     type Output = [u8];
     fn index(&self, _index: RangeFull) -> &Self::Output {
-        &self.source()[..]
+        self.source()
     }
 }
 
