@@ -1,6 +1,6 @@
 use crate::lexer::Token::*;
-use crate::span::*;
 use crate::parser::Error::*;
+use crate::span::*;
 
 macro_rules! parser {
     ($text:expr) => {{

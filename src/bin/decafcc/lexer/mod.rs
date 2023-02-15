@@ -33,8 +33,8 @@ impl App for Lexer {
                 match tok.get() {
                     Ok(Eof) => None,
                     Ok(
-                        Semicolon | And | Or | EqualEqual | NotEqual | Greater | GreaterEqual | Less
-                        | LessEqual | Minus | Plus | Assign | SubAssign | AddAssign | Colon
+                        Semicolon | And | Or | EqualEqual | NotEqual | Greater | GreaterEqual
+                        | Less | LessEqual | Minus | Plus | Assign | SubAssign | AddAssign | Colon
                         | Question | Comma | Void | For | Continue | Break | While | Int | Bool
                         | If | Else | Return | Len | Star | Slash | Percent | Not | LeftParen
                         | RightParen | CurlyLeft | CurlyRight | SquareLeft | SquareRight

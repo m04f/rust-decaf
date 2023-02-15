@@ -369,8 +369,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     fn var_decl(&mut self, ty: Type) -> Result<Var<'a>> {
         let beg = self.start_span();
         self.ident().map(|ident| {
-            self
-                .opt_size()
+            self.opt_size()
                 .map(|size| Var::new(ty, ident.clone(), size, self.end_span(beg)))
                 .unwrap_or_else(|_| Var::scalar(ty, ident.clone()))
         })
@@ -387,9 +386,9 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                             let error = self.expected_token(Token::Identifier);
                             self.report_error(error);
                         })
-                    .ok()
+                        .ok()
                 }))
-            .collect()
+                .collect()
         })
     }
 
@@ -615,7 +614,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                         self.consume(Token::Comma).ok()?;
                         self.call_arg().ok()
                     }))
-                .collect()
+                    .collect()
             })
             .unwrap_or(vec![]);
         _ = self.consume(Token::RightParen).map_err(|_| {
@@ -775,13 +774,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     fn return_stmt(&mut self) -> Result<Stmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::Return)?;
-        let expr = self.expr().map(Some).or_else(|e| {
-            if e == Dirty {
-                Err(Dirty)
-            } else {
-                Ok(None)
-            }
-        })?;
+        let expr =
+            self.expr()
+                .map(Some)
+                .or_else(|e| if e == Dirty { Err(Dirty) } else { Ok(None) })?;
         self.consume(Token::Semicolon)
             .map(|_| Stmt::return_stmt(expr, self.end_span(beg)))
             .map_err(|_| {

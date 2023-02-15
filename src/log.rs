@@ -69,12 +69,7 @@ impl<S: Write> Logger<S> {
         (line, column): (u32, u32),
         msg: &str,
     ) {
-        write!(
-            self.0,
-            "{}",
-            format_error(file_name, (line, column), msg)
-        )
-        .unwrap();
+        write!(self.0, "{}", format_error(file_name, (line, column), msg)).unwrap();
     }
 
     pub fn log_warning(&mut self, file_name: Option<&str>, (line, column): (u32, u32), msg: &str) {
