@@ -1,4 +1,4 @@
-use crate::ast::{self, Op, Type};
+use crate::ast::{self, Error as AstError, Op, RootChecker, StmtChecker, Type};
 
 use crate::span::*;
 
@@ -15,13 +15,14 @@ use core::iter::Peekable;
 mod test;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
+pub enum Error<'a> {
     Expected(Token, Token),
     ExpectedExpression,
     ExpectedBlock,
     LenNoArg,
     ExpectedMatching(Token, Token),
     ExpectedAssignExpr,
+    Ast(AstError<Span<'a>>),
 }
 
 /// the error returned by the parser.
@@ -88,6 +89,7 @@ type Loc<'a> = ast::Loc<Span<'a>>;
 type Assign<'a> = ast::Assign<Span<'a>>;
 type AssignExpr<'a> = ast::AssignExpr<Span<'a>>;
 type DocElem<'a> = ast::DocElem<Span<'a>>;
+type BlockChecker<'a> = ast::BlockChecker<Span<'a>>;
 
 impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> Parser<'a, I, EH> {
     pub fn new(tokens: I, eh: EH) -> Self {
@@ -137,7 +139,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         (self.error_callback)(error)
     }
 
-    fn expected_token(&mut self, token: Token) -> Error {
+    fn expected_token(&mut self, token: Token) -> Error<'a> {
         Expected(self.peek(), token)
     }
 
@@ -656,9 +658,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     fn block_elem(&mut self) -> Result<BlockElem<'a>> {
+        let beg = self.start_span();
         self.field_or_function_decl()
             .map(|decl_or_func| match decl_or_func {
-                Or::First(decl) => decl.into(),
+                Or::First(decl) => (decl, self.end_span(beg)).into(),
                 Or::Second(func) => func.into(),
             })
             .or_else(|e| {
@@ -674,16 +677,26 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     fn block(&mut self) -> Result<Block<'a>> {
         use std::iter;
         self.consume(Token::CurlyLeft)?;
+        let mut block_checker = BlockChecker::new();
         Ok(iter::from_fn(|| {
             // if it returns an error then we did not finish the block yet so we can continue
             self.consume(Token::CurlyRight).err()?;
-            self.block_elem().ok()
+            self.block_elem().ok().map(|elem| {
+                block_checker.check(&elem, |e| {
+                    self.report_error(Ast(e));
+                });
+                elem
+            })
         })
-        .collect())
+        .fold(Block::new(), |mut block, elem| {
+            block.add(elem);
+            block
+        }))
     }
 
     /// parses if statements, allows parsing conditions that is not surrounded by `()`
     fn if_stmt(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         self.consume(Token::If)?;
         let cond = self.expr().map_err(|_| {
             // FIXME: it is `(<expr>)` not an expression
@@ -697,25 +710,26 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         })?;
         if self.consume(Token::Else).is_ok() {
             self.block()
-                .map(|no| Stmt::if_stmt(cond, yes, Some(no)))
+                .map(|no| Stmt::if_stmt(cond, yes, Some(no), self.end_span(beg)))
                 .map_err(|err| {
                     assert_eq!(err, Clean);
                     self.report_error(ExpectedBlock);
                     Dirty
                 })
         } else {
-            Ok(Stmt::if_stmt(cond, yes, None))
+            Ok(Stmt::if_stmt(cond, yes, None, self.end_span(beg)))
         }
     }
 
     fn while_stmt(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         self.consume(Token::While)?;
         let cond = self.expr().map_err(|_| {
             self.report_error(ExpectedExpression);
             Dirty
         })?;
         self.block()
-            .map(|body| Stmt::while_stmt(cond, body))
+            .map(|body| Stmt::while_stmt(cond, body, self.end_span(beg)))
             .map_err(|e| {
                 assert_eq!(e, Clean);
                 self.report_error(ExpectedBlock);
@@ -724,6 +738,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     fn return_stmt(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         self.consume(Token::Return)?;
         let expr = self.expr().map(|expr| Some(expr)).or_else(|e| {
             if e == Dirty {
@@ -733,7 +748,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             }
         })?;
         self.consume(Token::Semicolon)
-            .map(|_| Stmt::return_stmt(expr))
+            .map(|_| Stmt::return_stmt(expr, self.end_span(beg)))
             .map_err(|_| {
                 let error = self.expected_token(Token::Semicolon);
                 self.report_error(error);
@@ -742,9 +757,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     fn break_stmt(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         self.consume(Token::Break)?;
         self.consume(Token::Semicolon)
-            .map(|_| Stmt::break_stmt())
+            .map(|_| Stmt::break_stmt(self.end_span(beg)))
             .map_err(|_| {
                 let error = self.expected_token(Token::Semicolon);
                 self.report_error(error);
@@ -753,9 +769,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     fn continue_stmt(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         self.consume(Token::Continue)?;
         self.consume(Token::Semicolon)
-            .map(|_| Stmt::continue_stmt())
+            .map(|_| Stmt::continue_stmt(self.end_span(beg)))
             .map_err(|_| {
                 let error = self.expected_token(Token::Semicolon);
                 self.report_error(error);
@@ -789,17 +806,15 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         }
     }
 
-    // fn for_stmt(&mut self) -> Result<Stmt<'a>> {
-    // }
-
     fn call_or_assignment(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         let stmt = self
             .call_or_loc()
             .and_then(|call_or_loc| match call_or_loc {
                 Or::First(call) => Ok(Stmt::call_stmt(call)),
                 Or::Second(loc) => self
                     .assign_expr()
-                    .map(|assignexpr| Assign::new(loc, assignexpr).into())
+                    .map(|assignexpr| Assign::new(loc, assignexpr, self.end_span(beg)).into())
                     .map_err(|_| {
                         self.report_error(ExpectedAssignExpr);
                         Dirty
@@ -823,9 +838,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     fn assign(&mut self) -> Result<Assign<'a>> {
+        let beg = self.start_span();
         self.loc().and_then(|loc| {
             self.assign_expr()
-                .map(|assignexpr| Assign::new(loc, assignexpr))
+                .map(|assignexpr| Assign::new(loc, assignexpr, self.end_span(beg)))
                 .map_err(|_| {
                     self.report_error(ExpectedAssignExpr);
                     Dirty
@@ -880,6 +896,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     fn for_stmt(&mut self) -> Result<Stmt<'a>> {
+        let beg = self.start_span();
         self.consume(Token::For)?;
         self.consume(Token::LeftParen).map_err(|_| {
             let error = self.expected_token(Token::LeftParen);
@@ -894,7 +911,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             self.report_error(ExpectedBlock);
             Dirty
         })?;
-        Ok(Stmt::for_stmt(init, cond, update, body))
+        Ok(Stmt::for_stmt(init, cond, update, body, self.end_span(beg)))
     }
 
     fn stmt(&mut self) -> Result<Stmt<'a>> {
@@ -941,12 +958,17 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                     self.for_stmt()
                 }
             })
+            .map(|stmt| {
+                StmtChecker::check(&stmt, |e| self.report_error(Ast(e)));
+                stmt
+            })
     }
 
     fn doc_elem(&mut self) -> Result<DocElem<'a>> {
+        let beg = self.start_span();
         self.field_or_function_decl()
             .map(|field_or_func| match field_or_func {
-                Or::First(field) => DocElem::decl(field),
+                Or::First(field) => DocElem::decl(field, self.end_span(beg)),
                 Or::Second(func) => DocElem::function(func),
             })
             .or_else(|e| {
@@ -960,9 +982,13 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
 
     pub fn doc_elems(&mut self) -> impl Iterator<Item = DocElem<'a>> + '_ {
         use std::iter;
+        let mut elem_checker = RootChecker::new();
         iter::from_fn(move || {
             self.doc_elem()
-                .map(|doc_elem| Some(doc_elem))
+                .map(|doc_elem| {
+                    elem_checker.check(&doc_elem, |e| self.report_error(Ast(e)));
+                    Some(doc_elem)
+                })
                 .unwrap_or_else(|_| None)
         })
     }

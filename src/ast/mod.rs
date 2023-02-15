@@ -1,7 +1,13 @@
 use crate::span::*;
 
+mod checker;
+
+pub use checker::Error;
+
 #[cfg(test)]
 use proptest_derive::Arbitrary;
+
+pub use self::checker::*;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(test, derive(Arbitrary))]
@@ -38,7 +44,17 @@ impl Op {
 pub enum BlockElem<S> {
     Stmt(Stmt<S>),
     Func(Function<S>),
-    Decl(Vec<Var<S>>),
+    Decl { decls: Vec<Var<S>>, span: S },
+}
+
+impl<S> BlockElem<S> {
+    pub fn pos(&self) -> &S {
+        match self {
+            BlockElem::Stmt(stmt) => stmt.span(),
+            BlockElem::Func(func) => func.span(),
+            BlockElem::Decl { span, .. } => span,
+        }
+    }
 }
 
 impl<S> From<Stmt<S>> for BlockElem<S> {
@@ -53,46 +69,9 @@ impl<S> From<Function<S>> for BlockElem<S> {
     }
 }
 
-impl<S> From<Vec<Var<S>>> for BlockElem<S> {
-    fn from(value: Vec<Var<S>>) -> Self {
-        BlockElem::Decl(value)
-    }
-}
-
-// TODO: change this
-pub struct BlockBuilder<S> {
-    block: Block<S>,
-}
-
-impl<S> BlockBuilder<S> {
-    pub fn new() -> Self {
-        BlockBuilder {
-            block: Block {
-                funcs: vec![],
-                decls: vec![],
-                stmts: vec![],
-            },
-        }
-    }
-    pub fn add(&mut self, elem: BlockElem<S>) {
-        match elem {
-            BlockElem::Stmt(stmt) => self.block.stmts.push(stmt),
-            BlockElem::Func(func) => self.block.funcs.push(func),
-            BlockElem::Decl(decl) => self.block.decls.extend(decl),
-        }
-    }
-    pub fn build(self) -> Block<S> {
-        self.block
-    }
-}
-
-impl<S> FromIterator<BlockElem<S>> for Block<S> {
-    fn from_iter<I: IntoIterator<Item = BlockElem<S>>>(iter: I) -> Self {
-        let mut builder = BlockBuilder::new();
-        for elem in iter {
-            builder.add(elem);
-        }
-        builder.build()
+impl<S> From<(Vec<Var<S>>, S)> for BlockElem<S> {
+    fn from((decls, span): (Vec<Var<S>>, S)) -> Self {
+        BlockElem::Decl { span, decls }
     }
 }
 
@@ -222,6 +201,10 @@ pub struct Loc<S> {
 }
 
 impl<S> Loc<S> {
+    pub fn span(&self) -> &S {
+        &self.span
+    }
+
     pub fn with_offset(ident: Identifier<S>, offset: Expr<S>, span: S) -> Self {
         Self {
             ident,
@@ -597,6 +580,10 @@ pub struct Function<S> {
 }
 
 impl<S> Function<S> {
+    pub fn span(&self) -> &S {
+        &self.span
+    }
+
     pub fn new(
         name: Identifier<S>,
         args: Vec<Var<S>>,
@@ -684,11 +671,24 @@ impl<S> StringLiteral<S> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Block<S> {
     funcs: Vec<Function<S>>,
     decls: Vec<Var<S>>,
     stmts: Vec<Stmt<S>>,
+}
+
+impl<S: Default> Block<S> {
+    pub fn new() -> Self {
+        Block::default()
+    }
+    pub fn add(&mut self, elem: BlockElem<S>) {
+        match elem {
+            BlockElem::Func(func) => self.funcs.push(func),
+            BlockElem::Decl { decls, span } => self.decls.extend(decls),
+            BlockElem::Stmt(stmt) => self.stmts.push(stmt),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -722,11 +722,16 @@ impl<S> AssignExpr<S> {
 pub struct Assign<S> {
     lhs: Loc<S>,
     op: AssignExpr<S>,
+    span: S,
 }
 
 impl<S> Assign<S> {
-    pub fn new(lhs: Loc<S>, op: AssignExpr<S>) -> Self {
-        Self { lhs, op }
+    pub fn span(&self) -> &S {
+        &self.span
+    }
+
+    pub fn new(lhs: Loc<S>, op: AssignExpr<S>, span: S) -> Self {
+        Self { lhs, op, span }
     }
 }
 
@@ -743,48 +748,79 @@ pub enum Stmt<S> {
         cond: Expr<S>,
         yes: Block<S>,
         no: Option<Block<S>>,
+        span: S,
     },
     While {
         cond: Expr<S>,
         body: Block<S>,
+        span: S,
     },
     For {
         init: Assign<S>,
         cond: Expr<S>,
         update: Assign<S>,
         body: Block<S>,
+        span: S,
     },
     Assign(Assign<S>),
-    Return(Option<Expr<S>>),
-    Break,
-    Continue,
+    Return {
+        expr: Option<Expr<S>>,
+        span: S,
+    },
+    Break(S),
+    Continue(S),
 }
 
 impl<S> Stmt<S> {
+    pub fn span(&self) -> &S {
+        match self {
+            Self::Call(call) => call.span(),
+            Self::If { span, .. } => span,
+            Self::While { span, .. } => span,
+            Self::For { span, .. } => span,
+            Self::Assign(assign) => assign.span(),
+            Self::Return { span, .. } => span,
+            Self::Break(span) => span,
+            Self::Continue(span) => span,
+        }
+    }
     pub fn call_stmt(call: Call<S>) -> Self {
         Self::Call(call)
     }
-    pub fn if_stmt(cond: Expr<S>, yes: Block<S>, no: Option<Block<S>>) -> Self {
-        Self::If { cond, yes, no }
+
+    pub fn if_stmt(cond: Expr<S>, yes: Block<S>, no: Option<Block<S>>, span: S) -> Self {
+        Self::If {
+            cond,
+            yes,
+            no,
+            span,
+        }
     }
-    pub fn while_stmt(cond: Expr<S>, body: Block<S>) -> Self {
-        Self::While { cond, body }
+    pub fn while_stmt(cond: Expr<S>, body: Block<S>, span: S) -> Self {
+        Self::While { cond, body, span }
     }
-    pub fn return_stmt(expr: Option<Expr<S>>) -> Self {
-        Self::Return(expr)
+    pub fn return_stmt(expr: Option<Expr<S>>, span: S) -> Self {
+        Self::Return { expr, span }
     }
-    pub fn continue_stmt() -> Self {
-        Self::Continue
+    pub fn continue_stmt(span: S) -> Self {
+        Self::Continue(span)
     }
-    pub fn break_stmt() -> Self {
-        Self::Break
+    pub fn break_stmt(span: S) -> Self {
+        Self::Break(span)
     }
-    pub fn for_stmt(init: Assign<S>, cond: Expr<S>, update: Assign<S>, body: Block<S>) -> Self {
+    pub fn for_stmt(
+        init: Assign<S>,
+        cond: Expr<S>,
+        update: Assign<S>,
+        body: Block<S>,
+        span: S,
+    ) -> Self {
         Self::For {
             init,
             cond,
             update,
             body,
+            span,
         }
     }
 }
@@ -792,7 +828,7 @@ impl<S> Stmt<S> {
 #[derive(Debug, Clone)]
 pub enum DocElem<S> {
     Function(Function<S>),
-    Decl(Vec<Var<S>>),
+    Decl(Vec<Var<S>>, S),
     Import(Import<S>),
 }
 
@@ -800,11 +836,19 @@ impl<S> DocElem<S> {
     pub fn function(func: Function<S>) -> Self {
         Self::Function(func)
     }
-    pub fn decl(decls: Vec<Var<S>>) -> Self {
-        Self::Decl(decls)
+    pub fn decl(decls: Vec<Var<S>>, span: S) -> Self {
+        Self::Decl(decls, span)
     }
     pub fn import(import: Import<S>) -> Self {
         Self::Import(import)
+    }
+
+    pub fn span(&self) -> &S {
+        match self {
+            Self::Function(func) => func.span(),
+            Self::Decl(_, span) => span,
+            Self::Import(import) => import.span(),
+        }
     }
 }
 
