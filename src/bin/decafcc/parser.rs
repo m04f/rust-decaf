@@ -16,10 +16,10 @@ impl App for Parser {
     ) -> ExitStatus {
         let text = read_to_string(input_file).unwrap();
         let code = SpanSource::new(text.as_bytes());
-        let mut parser = dcfrs::parser::Parser::new(
-            tokens(code.source(), |e| eprintln!("{e:?}")).map(|s| s.map(|t| t.unwrap())),
-            |e| eprintln!("{e:?}"),
-        );
+        let mut parser =
+            dcfrs::parser::Parser::new(tokens(code.source()).map(|s| s.map(|t| t.unwrap())), |e| {
+                eprintln!("{e:?}")
+            });
         parser.doc_elems().for_each(|e| println!("{e:#?}"));
         if parser.finised() && !parser.found_errors() {
             ExitStatus::Success

@@ -16,7 +16,7 @@ macro_rules! parser {
         println!("parsing: {}", $text);
         span!(text, $text);
         let mut $parser = Parser::new(
-            tokens(text, |_| {}).map(|res| res.map(|res| res.unwrap())),
+            tokens(text).map(|res| res.map(|res| res.unwrap())),
             |e| panic!("unexpected error: {e:?}"),
         );
     };
@@ -24,7 +24,7 @@ macro_rules! parser {
         println!("parsing: {}", $text);
         span!(text, $text);
         let mut $parser = Parser::new(
-            tokens(text, |_| {}).map(|res| res.map(|res| res.unwrap())),
+            tokens(text).map(|res| res.map(|res| res.unwrap())),
             $err,
         );
     };

@@ -147,6 +147,15 @@ impl<'a, T> Spanned<'a, T> {
     }
 }
 
+impl<'a, T, E> Spanned<'a, Result<T, E>> {
+    // converts Spanned<Result<T, E>> to Result<Spanned<T>, Spanned<E>>
+    pub fn transpose(self) -> Result<Spanned<'a, T>, Spanned<'a, E>> {
+        self.data
+            .map(|data| Spanned::new(self.span, data))
+            .map_err(|err| Spanned::new(self.span, err))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Span<'a> {
     source: &'a [u8],

@@ -1,4 +1,4 @@
-use crate::{log::format_error, span::*};
+use crate::{error::CCError, span::*};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Error {
@@ -13,6 +13,8 @@ pub enum Error {
     UnterminatedComment,
     UnterminatedChar,
 }
+
+impl Error {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
@@ -388,10 +390,7 @@ fn token(span: Span) -> Option<(Spanned<Result>, Span)> {
     }
 }
 
-pub fn tokens<L: FnMut(Spanned<Error>)>(
-    mut text: Span,
-    mut log: L,
-) -> impl Iterator<Item = Spanned<Result>> {
+pub fn tokens(mut text: Span) -> impl Iterator<Item = Spanned<Result>> {
     use std::iter;
     iter::from_fn(move || {
         if text.is_empty() {
@@ -408,96 +407,52 @@ pub fn tokens<L: FnMut(Spanned<Error>)>(
             Ok(Token::Space) | Ok(Token::LineComment) | Ok(Token::BlockComment)
         )
     })
-    .inspect(move |tok| {
-        if let Err(err) = tok.get() {
-            log(tok.span().into_spanned(*err))
-        }
-    })
     .chain(iter::once(
         text.split_at(text.len()).1.into_spanned(Ok(Token::Eof)),
     ))
 }
 
-/// creats a log function to the given stream.
-/// example:
-/// TODO: fix this
-/// ```
-/// // use dcfrs::lexer::{log_err, tokens};
-///
-/// // let mut mock_stderr = vec![];
-/// // let mut log = log_err(&mut mock_stderr, "test.dcf");
-///
-/// // tokens(b"'\\a'", log);
-/// // assert_eq!(mock_stderr, b"test.dcf:1:2: invalid escape sequence: \\a");
-/// ```
-pub fn log_err<'a, T: AsRef<str> + 'a>(
-    mut write: impl FnMut(String) + 'a,
-    input_file: T,
-) -> impl FnMut(Spanned<Error>) + 'a {
-    move |err| {
-        let string = |slice: &[u8]| String::from_utf8(slice.to_vec()).unwrap();
-        let mut loge =
-            |pos: (usize, usize), msg: &str| write(format_error(input_file.as_ref(), pos, msg));
-
-        fn print_u8(c: u8) -> String {
-            if c.is_ascii_digit() {
-                format!("{}", c as char)
-            } else {
-                format!("\\x{:02x}", c)
-            }
+fn single_error_msg(err: Spanned<Error>) -> String {
+    let string = |slice: &[u8]| String::from_utf8(slice.to_vec()).unwrap();
+    fn print_u8(c: u8) -> String {
+        if c.is_ascii_digit() {
+            format!("{}", c as char)
+        } else {
+            format!("\\x{:02x}", c)
         }
-        let mut handle_single_error = |err: Spanned<Error>| match err.get() {
-            Error::EmptyHexLiteral => {
-                loge(
-                    err.position(),
-                    &format!("invalid hex literal: {}", string(err.fragment())),
-                );
-            }
-            Error::EmptyChar => {
-                loge(err.position(), "empty char literal");
-            }
-            Error::InvalidEscape(c) => {
-                loge(
-                    err.position(),
-                    &format!("invalid escape sequence: \\{}", print_u8(*c)),
-                );
-            }
-            Error::InvalidChar(c) => {
-                loge(
-                    err.position(),
-                    &format!("invalid character literal: {}", print_u8(*c)),
-                );
-            }
-            Error::UnexpectedChar(c) => {
-                loge(
-                    err.position(),
-                    &format!("unexpected character: {}", print_u8(*c)),
-                );
-            }
-            Error::UnterminatedString => {
-                loge(err.position(), "unterminated string literal");
-            }
-            Error::UnterminatedChar => {
-                loge(err.position(), "unterminated char literal");
-            }
-            Error::UnterminatedComment => {
-                loge(err.position(), "unterminated block comment");
-            }
-            Error::NonAsciiChars => {
-                loge(
-                    err.position(),
-                    &format!("non-ascii characters: {}", string(err.fragment())),
-                );
-            }
-            _ => unreachable!(),
-        };
+    }
+    match err.get() {
+        Error::EmptyHexLiteral => {
+            format!("invalid hex literal: {}", string(err.fragment()))
+        }
+        Error::EmptyChar => "empty char literal".to_string(),
+        Error::InvalidEscape(c) => {
+            format!("invalid escape sequence: \\{}", print_u8(*c))
+        }
+        Error::InvalidChar(c) => {
+            format!("invalid character literal: {}", print_u8(*c))
+        }
+        Error::UnexpectedChar(c) => {
+            format!("unexpected character: {}", print_u8(*c))
+        }
+        Error::UnterminatedString => "unterminated string literal".to_string(),
+        Error::UnterminatedChar => "unterminated char literal".to_string(),
+        Error::UnterminatedComment => "unterminated block comment".to_string(),
+        Error::NonAsciiChars => {
+            format!("non-ascii characters: {}", string(err.fragment()))
+        }
+        _ => unreachable!(),
+    }
+}
 
-        match err.get() {
-            Error::StringLiteral => {
-                get_string_errors(err.span()).for_each(handle_single_error);
-            }
-            _ => handle_single_error(err),
-        };
+impl<'a> CCError for Spanned<'a, Error> {
+    fn msgs(self) -> Vec<(String, (usize, usize))> {
+        match self.get() {
+            Error::StringLiteral => get_string_errors(self.span())
+                .map(|err| (single_error_msg(err), err.position()))
+                .collect(),
+            _ => vec![(single_error_msg(self), self.position())],
+        }
     }
 }
 
@@ -754,7 +709,7 @@ mod test {
     fn eof() {
         use super::*;
         span!(text, b"some text ***  // comment");
-        let mut tokens = tokens(text, |_| {}).skip_while(|tok| tok.get().unwrap() != Token::Eof);
+        let mut tokens = tokens(text).skip_while(|tok| tok.get().unwrap() != Token::Eof);
         let eof = tokens.next().unwrap();
         assert_eq!(eof.get().unwrap(), Token::Eof);
         assert_eq!(eof.fragment(), b"");

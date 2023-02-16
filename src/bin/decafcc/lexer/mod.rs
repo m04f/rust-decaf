@@ -1,7 +1,4 @@
-use dcfrs::{
-    lexer::{log_err, tokens},
-    span::SpanSource,
-};
+use dcfrs::{error::CCError, lexer::tokens, log::format_error, span::SpanSource};
 use std::{fs, io::Read};
 
 use crate::{App, ExitStatus};
@@ -21,15 +18,14 @@ impl App for Lexer {
             });
         }
 
-        let ewrite = |s: String| writeln!(stderr, "{}", s).unwrap();
-        let log_err = log_err(ewrite, input_file.clone());
+        let mut ewrite = |s: String| writeln!(stderr, "{}", s).unwrap();
         let mut buf = vec![];
-        fs::File::open(input_file)
+        fs::File::open(&input_file)
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();
         let code = SpanSource::new(&buf);
-        let err_count = tokens(code.source(), log_err)
+        let err_count = tokens(code.source())
             .filter_map(|tok| {
                 use dcfrs::lexer::Token::*;
                 use std::string::String as StdString;
@@ -72,7 +68,14 @@ impl App for Lexer {
                         None
                     }
                     // errors are logged in the lexer module anyways
-                    Err(_) => Some(()),
+                    Err(_) => {
+                        let err = tok.transpose().unwrap_err();
+                        err.msgs()
+                            .iter()
+                            .for_each(|m| ewrite(format_error(&input_file, m.1, &m.0)));
+
+                        Some(())
+                    }
                     _ => unreachable!(),
                 }
             })

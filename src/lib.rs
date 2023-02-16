@@ -6,3 +6,4 @@ pub mod lexer;
 pub mod log;
 pub mod parser;
 pub mod span;
+pub mod error;
