@@ -91,9 +91,7 @@ fn get_string_errors(span: Span) -> impl Iterator<Item = Spanned<Error>> + '_ {
                 None
             }
         } else if c == b'\\' {
-            println!("c: {}, escape_next: {}", c as char, escape_next);
             escape_next = true;
-            println!("c: {}, escape_next: {}", c as char, escape_next);
             None
         } else if !is_dcf_char(c) {
             Some(Error::InvalidChar(c))
