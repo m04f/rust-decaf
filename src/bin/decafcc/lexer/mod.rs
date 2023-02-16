@@ -1,4 +1,7 @@
-use dcfrs::lexer::{log_err, tokens};
+use dcfrs::{
+    lexer::{log_err, tokens},
+    span::SpanSource,
+};
 use std::{fs, io::Read};
 
 use crate::{App, ExitStatus};
@@ -25,7 +28,8 @@ impl App for Lexer {
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();
-        let err_count = tokens(&buf, log_err)
+        let code = SpanSource::new(&buf);
+        let err_count = tokens(code.source(), log_err)
             .filter_map(|tok| {
                 use dcfrs::lexer::Token::*;
                 use std::string::String as StdString;

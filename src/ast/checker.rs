@@ -73,7 +73,7 @@ impl StmtChecker {
     }
 }
 
-impl<S: Default + Clone> BlockChecker<S> {
+impl<S: Clone> BlockChecker<S> {
     pub fn new() -> Self {
         BlockChecker {
             decls_finished: false,

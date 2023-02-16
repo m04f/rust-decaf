@@ -1,7 +1,7 @@
 use std::fs::read_to_string;
 
 use crate::*;
-use dcfrs::lexer::*;
+use dcfrs::{lexer::*, span::SpanSource};
 
 #[cfg(test)]
 mod test;
@@ -15,8 +15,9 @@ impl App for Parser {
         input_file: String,
     ) -> ExitStatus {
         let text = read_to_string(input_file).unwrap();
+        let code = SpanSource::new(text.as_bytes());
         let mut parser = dcfrs::parser::Parser::new(
-            tokens(text.as_bytes(), |e| eprintln!("{e:?}")).map(|s| s.map(|t| t.unwrap())),
+            tokens(code.source(), |e| eprintln!("{e:?}")).map(|s| s.map(|t| t.unwrap())),
             |e| eprintln!("{e:?}"),
         );
         parser.doc_elems().for_each(|e| println!("{e:#?}"));

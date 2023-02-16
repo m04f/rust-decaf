@@ -391,17 +391,16 @@ fn token(span: Span) -> Option<(Spanned<Result>, Span)> {
 }
 
 pub fn tokens<L: FnMut(Spanned<Error>)>(
-    text: &[u8],
+    mut text: Span,
     mut log: L,
 ) -> impl Iterator<Item = Spanned<Result>> {
     use std::iter;
-    let mut s = Span::new(text);
     iter::from_fn(move || {
-        if s.is_empty() {
+        if text.is_empty() {
             None
         } else {
-            let (tok, rem) = token(s)?;
-            s = rem;
+            let (tok, rem) = token(text)?;
+            text = rem;
             Some(tok)
         }
     })
@@ -417,7 +416,7 @@ pub fn tokens<L: FnMut(Spanned<Error>)>(
         }
     })
     .chain(iter::once(
-        s.split_at(s.len()).1.into_spanned(Ok(Token::Eof)),
+        text.split_at(text.len()).1.into_spanned(Ok(Token::Eof)),
     ))
 }
 
@@ -440,7 +439,7 @@ pub fn log_err<'a, T: AsRef<str> + 'a>(
     move |err| {
         let string = |slice: &[u8]| String::from_utf8(slice.to_vec()).unwrap();
         let mut loge =
-            |pos: (u32, u32), msg: &str| write(format_error(input_file.as_ref(), pos, msg));
+            |pos: (usize, usize), msg: &str| write(format_error(input_file.as_ref(), pos, msg));
 
         fn print_u8(c: u8) -> String {
             if c.is_ascii_digit() {
@@ -517,60 +516,68 @@ mod test {
         opt.unwrap().1
     }
 
+    macro_rules! span {
+        ($span:ident, $text:expr) => {
+            let span_source = SpanSource::new($text);
+            let $span = span_source.source();
+        };
+    }
+
     #[test]
     fn identifier() {
         use super::*;
         let text = b"abc";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = identifier(span).unwrap();
         assert_eq!(s1.get().unwrap(), Identifier);
         assert_eq!(s1.fragment(), b"abc");
         assert_eq!(s2.source(), b"");
 
         let text = b"_abc";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = identifier(span).unwrap();
         assert_eq!(s1.get().unwrap(), Identifier);
         assert_eq!(s1.fragment(), b"_abc");
         assert_eq!(s2.source(), b"");
 
         let text = b"abc def";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = identifier(span).unwrap();
         assert_eq!(s1.get().unwrap(), Identifier);
         assert_eq!(s1.fragment(), b"abc");
         assert_eq!(s2.source(), b" def");
 
         let text = b"123abc";
-        assert!(identifier(Span::new(text)).is_none());
+        span!(span, text);
+        assert!(identifier(span).is_none());
     }
 
     #[test]
     fn char_literal() {
         use super::*;
         let text = b"'a'";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = char_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), CharLiteral(b'a'));
         assert_eq!(s1.fragment(), b"'a'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'\\'";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = char_literal(span).unwrap();
         assert_eq!(s1.get().unwrap_err(), Error::UnterminatedChar);
         assert_eq!(s1.fragment(), b"'\\'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'	'";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = char_literal(span).unwrap();
         assert_eq!(s1.get().unwrap_err(), Error::InvalidChar(b'\t'));
         assert_eq!(s1.fragment(), b"'	'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'\\t'";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = char_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), CharLiteral(b'\t'));
         assert_eq!(s1.fragment(), b"'\\t'");
@@ -581,7 +588,7 @@ mod test {
     fn string_literal() {
         use super::*;
         let text = b"\"abc\"";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = string_literal(span).unwrap();
         println!("{:?}", get_string_errors(s1.span()).collect::<Vec<_>>());
         assert_eq!(s1.get().unwrap(), StringLiteral);
@@ -589,14 +596,14 @@ mod test {
         assert_eq!(s2.source(), b"");
 
         let text = br#""\"abcdef\"""#;
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = string_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), StringLiteral);
         assert_eq!(s1.fragment(), br#""\"abcdef\"""#);
         assert_eq!(s2.source(), b"");
 
         let text = b"\"abc alot of text that does not\\\" terminate with a quote";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = string_literal(span).unwrap();
         s1.get().unwrap_err();
         assert_eq!(
@@ -610,45 +617,46 @@ mod test {
     fn int_literal() {
         use super::*;
         let text = b"123";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), DecimalLiteral);
         assert_eq!(s1.fragment(), b"123");
         assert_eq!(s2.source(), b"");
 
         let text = b"123abc";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), DecimalLiteral);
         assert_eq!(s1.fragment(), b"123");
         assert_eq!(s2.source(), b"abc");
 
         let text = b"12a111";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), DecimalLiteral);
         assert_eq!(s1.fragment(), b"12");
         assert_eq!(s2.source(), b"a111");
 
         let text = b"b1111";
-        assert!(int_literal(Span::new(text)).is_none());
+        span!(span, text);
+        assert!(int_literal(span).is_none());
 
         let text = b"0x123";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x123");
         assert_eq!(s2.source(), b"");
 
         let text = b"0x123abc";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x123abc");
         assert_eq!(s2.source(), b"");
 
         let text = b"0x123abcg";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         // really...
         assert_eq!(s1.get().unwrap(), HexLiteral);
@@ -656,14 +664,14 @@ mod test {
         assert_eq!(s2.source(), b"g");
 
         let text = b"0x12gabcg";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap(), HexLiteral);
         assert_eq!(s1.fragment(), b"0x12");
         assert_eq!(s2.source(), b"gabcg");
 
         let text = "0xtttt";
-        let span = Span::new(text.as_bytes());
+        span!(span, text.as_bytes());
         let (s1, s2) = int_literal(span).unwrap();
         assert_eq!(s1.get().unwrap_err(), Error::EmptyHexLiteral);
         assert_eq!(s1.fragment(), b"0x");
@@ -673,21 +681,21 @@ mod test {
     #[test]
     fn skip_spaces() {
         use super::*;
-        let span = Span::new(b"    some text");
+        span!(span, b"    some text");
         assert_eq!(rem(skip_spaces(span)).source(), b"some text");
-        let span = Span::new(b"\n\n\t  \n some text");
+        span!(span, b"\n\n\t  \n some text");
         assert_eq!(rem(skip_spaces(span)).source(), b"some text");
-        let span = Span::new(b"   \n\t");
+        span!(span, b"   \n\t");
         assert_eq!(rem(skip_spaces(span)).source(), b"");
     }
 
     #[test]
     fn skip_line_comment() {
         use super::*;
-        let span = Span::new(b"// comment\nsometext");
+        span!(span, b"// comment\nsometext");
         let span = skip_line_comment(span);
         assert_eq!(rem(span).source(), b"\nsometext");
-        let span = Span::new(b"// comment");
+        span!(span, b"// comment");
         let span = skip_line_comment(span);
         assert_eq!(rem(span).source(), b"");
     }
@@ -695,18 +703,18 @@ mod test {
     #[test]
     fn skip_block_comment() {
         use super::*;
-        let span = Span::new(b"/* comment */sometext");
+        span!(span, b"/* comment */sometext");
         let span = skip_block_comment(span);
         assert_eq!(rem(span).source(), b"sometext",);
-        let span = Span::new(b"/* comment ");
+        span!(span, b"/* comment ");
         let span = skip_block_comment(span);
         assert_eq!(rem(span).source(), b"");
 
-        let span = Span::new(b"/**/");
+        span!(span, b"/**/");
         let span = skip_block_comment(span);
         assert_eq!(rem(span).source(), b"");
 
-        let span = Span::new(b"/*/");
+        span!(span, b"/*/");
         let rem = rem(skip_block_comment(span));
         assert!(rem.is_empty())
     }
@@ -715,7 +723,7 @@ mod test {
     fn symbol() {
         use super::*;
         let text = b"==";
-        let span = Span::new(text);
+        span!(span, text);
         let (s1, s2) = symbol(span).unwrap();
         assert_eq!(s1.get().unwrap(), EqualEqual);
         assert_eq!(s1.fragment(), b"==");
@@ -723,7 +731,8 @@ mod test {
 
         use std::iter;
         let text = b"=+-*/%&&||!<>?:";
-        let mut span = Span::new(text);
+        span!(span, text);
+        let mut span = span;
         let symbols = iter::from_fn(move || {
             if span.is_empty() {
                 None
@@ -746,12 +755,12 @@ mod test {
     #[test]
     fn eof() {
         use super::*;
-        let text = b"some text ***  // comment";
+        span!(text, b"some text ***  // comment");
         let mut tokens = tokens(text, |_| {}).skip_while(|tok| tok.get().unwrap() != Token::Eof);
         let eof = tokens.next().unwrap();
         assert_eq!(eof.get().unwrap(), Token::Eof);
         assert_eq!(eof.fragment(), b"");
-        assert_eq!(eof.position(), (1, text.len() as u32 + 1));
+        assert_eq!(eof.position(), (1, text.len() + 1));
         assert!(tokens.next().is_none());
     }
 }

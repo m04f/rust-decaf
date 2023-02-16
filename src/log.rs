@@ -66,7 +66,7 @@ impl<S: Write> Logger<S> {
     pub fn log_error<T: AsRef<str>>(
         &mut self,
         file_name: T,
-        (line, column): (u32, u32),
+        (line, column): (usize, usize),
         msg: &str,
     ) {
         write!(self.0, "{}", format_error(file_name, (line, column), msg)).unwrap();
@@ -101,7 +101,7 @@ impl<S: Write> Logger<S> {
 
 pub fn format_error<F: AsRef<str>, M: AsRef<str>>(
     file_name: F,
-    position: (u32, u32),
+    position: (usize, usize),
     msg: M,
 ) -> String {
     format!(

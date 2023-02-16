@@ -2,61 +2,68 @@ use crate::lexer::Token::*;
 use crate::parser::Error::*;
 use crate::span::*;
 
+macro_rules! span {
+    ($span:ident, $text:expr) => {
+        let span_source = SpanSource::new($text.as_bytes());
+        let $span = span_source.source();
+    };
+}
+
+use crate::lexer::tokens;
+use crate::parser::Parser;
 macro_rules! parser {
-    ($text:expr) => {{
-        use crate::lexer::tokens;
-        use crate::parser::Parser;
+    ($parser:ident, $text:expr) => {
         println!("parsing: {}", $text);
-        Parser::new(
-            tokens($text.as_bytes(), |_| {}).map(|res| res.map(|res| res.unwrap())),
+        span!(text, $text);
+        let mut $parser = Parser::new(
+            tokens(text, |_| {}).map(|res| res.map(|res| res.unwrap())),
             |e| panic!("unexpected error: {e:?}"),
-        )
-    }};
-    ($text:expr, $err:expr) => {{
-        use crate::lexer::tokens;
-        use crate::parser::Parser;
+        );
+    };
+    ($parser:ident, $text:expr, $err:expr) => {
         println!("parsing: {}", $text);
-        Parser::new(
-            tokens($text.as_bytes(), |_| {}).map(|res| res.map(|res| res.unwrap())),
+        span!(text, $text);
+        let mut $parser = Parser::new(
+            tokens(text, |_| {}).map(|res| res.map(|res| res.unwrap())),
             $err,
-        )
-    }};
+        );
+    };
 }
 
 #[test]
 fn literals() {
     use crate::ast::*;
-    let mut parser = parser!("1");
+    parser!(parser, "1");
     assert_eq!(
         parser.expr().unwrap(),
         Expr::from(IntLiteral::from_decimal("1"))
     );
 
-    let mut parser = parser!("0x1");
+    parser!(parser, "0x1");
     assert_eq!(
         parser.expr().unwrap(),
         Expr::from(IntLiteral::from_hex("0x1"))
     );
 
-    let mut parser = parser!("'c'");
+    parser!(parser, "'c'");
+    span!(expect, "'c'");
+    let expect = expect.into_spanned(b'c');
     assert_eq!(
         parser.expr().unwrap(),
-        Expr::from(CharLiteral::from_spanned(
-            Span::new(b"'c'").into_spanned(b'c')
-        ))
+        Expr::from(CharLiteral::from_spanned(expect))
     );
-    let mut parser = parser!("false");
+    parser!(parser, "false");
+    span!(expect, "false");
+    let expect = expect.into_spanned(false);
     assert_eq!(
         parser.expr().unwrap(),
-        Expr::from(BoolLiteral::from_spanned(
-            Span::new(b"false").into_spanned(false)
-        ))
+        Expr::from(BoolLiteral::from_spanned(expect))
     );
 }
 
 #[test]
 fn bad_call_stmt_with_output() {
-    let mut parser = parser!("call()", |err| assert_eq!(
+    parser!(parser, "call()", |err| assert_eq!(
         err.into_parts().0,
         Expected(Eof, Semicolon)
     ));
@@ -69,7 +76,7 @@ fn bad_call_stmt_with_output() {
         Expected(Eof, Semicolon),
     ]
     .into_iter();
-    let mut parser = parser!("call(", |err| {
+    parser!(parser, "call(", |err| {
         assert_eq!(err.into_parts().0, errors.next().unwrap());
     });
     let stmt = parser.stmt();
@@ -79,13 +86,13 @@ fn bad_call_stmt_with_output() {
 
 #[test]
 fn bool_decl() {
-    let mut parser = parser!("bool a;");
+    parser!(parser, "bool a;");
     parser.field_or_function_decl().unwrap();
 }
 
 #[test]
 fn multi_decl() {
-    let mut parser = parser!(r#" int a, b, c;"#);
+    parser!(parser, r#" int a, b, c;"#);
     parser.field_or_function_decl().unwrap();
     assert!(parser.finised());
 }
@@ -93,7 +100,7 @@ fn multi_decl() {
 #[test]
 fn not_expr() {
     use crate::ast::*;
-    let mut parser = parser!("!0");
+    parser!(parser, "!0");
     let expr = parser.expr().unwrap();
     assert_eq!(expr, Expr::not(IntLiteral::from_decimal("0").into(), ""))
 }
@@ -101,7 +108,7 @@ fn not_expr() {
 #[test]
 fn neg_expr() {
     use crate::ast::*;
-    let mut parser = parser!("-0");
+    parser!(parser, "-0");
     let expr = parser.expr().unwrap();
     assert_eq!(expr, Expr::neg(IntLiteral::from_decimal("0").into(), ""))
 }
@@ -109,7 +116,7 @@ fn neg_expr() {
 #[test]
 fn mul_expr() {
     use crate::ast::*;
-    let mut parser = parser!("a * b");
+    parser!(parser, "a * b");
     let expr = parser.expr().unwrap();
     assert_eq!(
         expr,
@@ -125,7 +132,7 @@ fn mul_expr() {
 #[test]
 fn add_expr() {
     use crate::ast::*;
-    let mut parser = parser!("a + b");
+    parser!(parser, "a + b");
     let expr = parser.expr().unwrap();
     assert_eq!(
         expr,
@@ -141,7 +148,7 @@ fn add_expr() {
 #[test]
 fn basic_prec_expr() {
     use crate::ast::*;
-    let mut parser = parser!("a + b * c");
+    parser!(parser, "a + b * c");
     let expr = parser.expr().unwrap();
     assert_eq!(
         expr,
@@ -162,13 +169,13 @@ fn basic_prec_expr() {
 #[test]
 fn double_neg() {
     use crate::ast::*;
-    let mut parser = parser!("- -0");
+    parser!(parser, "- -0");
     let expr = parser.expr();
     let expr = expr.unwrap();
     assert_eq!(
         expr,
         Expr::neg(
-            Expr::neg(IntLiteral::from_decimal("0").into(), "").into(),
+            Expr::neg(IntLiteral::from_decimal("0").into(), ""),
             ""
         ),
     );
@@ -177,7 +184,7 @@ fn double_neg() {
 #[test]
 fn multiple_params() {
     use crate::ast::*;
-    let mut parser = parser!("(int b, int c)");
+    parser!(parser, "(int b, int c)");
     let params = parser.func_params().unwrap();
     assert_eq!(
         params,
@@ -192,12 +199,12 @@ fn multiple_params() {
 #[test]
 fn index_expr() {
     use crate::ast::*;
-    let mut parser = parser!("a[b+2]");
+    parser!(parser, "a[b+2]");
     let expr = parser.expr().unwrap();
     assert_eq!(
         expr,
         Expr::index(
-            Identifier::from_span("a").into(),
+            Identifier::from_span("a"),
             Expr::binop(
                 Identifier::from_span("b").into(),
                 Op::Add,
@@ -215,7 +222,10 @@ fn no_semicolon_decl() {
     use super::Or;
     use crate::ast::*;
     let mut errors = vec![Expected(Eof, Semicolon)].into_iter();
-    let mut parser = parser!("int a", |e| assert_eq!(*e.get(), errors.next().unwrap()));
+    parser!(parser, "int a", |e| assert_eq!(
+        *e.get(),
+        errors.next().unwrap()
+    ));
     let decl = parser.field_or_function_decl().unwrap();
     if let Or::First(var) = decl {
         assert_eq!(var, vec![Var::scalar(Type::Int, "a".into())]);
@@ -228,7 +238,8 @@ fn no_semicolon_decl() {
 fn decl_stmt_decl() {
     use crate::ast::Error::*;
     let mut err_count = 0;
-    let mut parser = parser!(
+    parser!(
+        parser,
         "{ int a; a = a; int b; }",
         |e| if let Ast(MoveDeclTo { .. }) = e.get() {
             err_count += 1;

@@ -666,16 +666,26 @@ impl<S> StringLiteral<S> {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Block<S> {
     funcs: Vec<Function<S>>,
     decls: Vec<Var<S>>,
     stmts: Vec<Stmt<S>>,
 }
 
-impl<S: Default> Block<S> {
+impl<S> Default for Block<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S> Block<S> {
     pub fn new() -> Self {
-        Block::default()
+        Self {
+            funcs: Vec::new(),
+            decls: Vec::new(),
+            stmts: Vec::new(),
+        }
     }
     pub fn add(&mut self, elem: BlockElem<S>) {
         match elem {
