@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    hash::Hash,
     iter::Copied,
     ops::{Index, Range, RangeFrom, RangeFull, RangeTo},
     slice,
@@ -162,6 +163,12 @@ pub struct Span<'a> {
     span_source: &'a SpanSource<'a>,
 }
 
+impl Hash for Span<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+    }
+}
+
 impl<'a> Debug for Span<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_string())
@@ -170,7 +177,12 @@ impl<'a> Debug for Span<'a> {
 
 impl ToString for Span<'_> {
     fn to_string(&self) -> String {
-        String::from_utf8_lossy(self.source()).to_string()
+        format!(
+            "{}:{}:{}",
+            self.line(),
+            self.column(),
+            std::str::from_utf8(self.source()).unwrap()
+        )
     }
 }
 

@@ -1,9 +1,12 @@
 #![allow(dead_code)]
+#![allow(clippy::redundant_closure)]
 #![feature(if_let_guard)]
+#![feature(anonymous_lifetime_in_impl_trait)]
 
 pub mod ast;
+pub mod error;
 pub mod lexer;
 pub mod log;
 pub mod parser;
+pub mod semantics;
 pub mod span;
-pub mod error;

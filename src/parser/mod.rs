@@ -23,7 +23,7 @@ pub enum Error<'a> {
     ExpectedMatching(Token, Token),
     ExpectedAssignExpr,
     Unexpected(Token),
-    Ast(AstError<Span<'a>>),
+    Ast(AstError<'a>),
 }
 
 /// the error returned by the parser.
@@ -51,7 +51,7 @@ pub struct Parser<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<
 
 macro_rules! binop {
     ($name:ident, $sub:ident, $first:ident => $first_mapped:ident, $($token:ident => $token_mapped:ident),*) => {
-        fn $name(&mut self) -> Result<Expr<'a>> {
+        fn $name(&mut self) -> Result<PExpr<'a>> {
             let op = move |p: &mut Parser<'a, I, EH>| {
                 p.consume(Token::$first)
                     .map(|_| Op::$first_mapped)
@@ -64,33 +64,131 @@ macro_rules! binop {
                     Dirty
                 })?;
                 let span = expr.span().merge(*rhs.span());
-                expr = Expr::binop(expr, op, rhs, span);
+                expr = PExpr::binop(expr, op, rhs, span);
             }
             Ok(expr)
         }
     };
 }
 
-type Expr<'a> = ast::Expr<Span<'a>>;
-type Stmt<'a> = ast::Stmt<Span<'a>>;
-type Block<'a> = ast::Block<Span<'a>>;
-type BlockElem<'a> = ast::BlockElem<Span<'a>>;
-type Identifier<'a> = ast::Identifier<Span<'a>>;
-type Import<'a> = ast::Import<Span<'a>>;
-type IntLiteral<'a> = ast::IntLiteral<Span<'a>>;
-type ELiteral<'a> = ast::ELiteral<Span<'a>>;
-type BoolLiteral<'a> = ast::BoolLiteral<Span<'a>>;
-type CharLiteral<'a> = ast::CharLiteral<Span<'a>>;
-type StringLiteral<'a> = ast::StringLiteral<Span<'a>>;
-type Arg<'a> = ast::Arg<Span<'a>>;
-type Function<'a> = ast::Function<Span<'a>>;
-type Var<'a> = ast::Var<Span<'a>>;
-type Call<'a> = ast::Call<Span<'a>>;
-type Loc<'a> = ast::Loc<Span<'a>>;
-type Assign<'a> = ast::Assign<Span<'a>>;
-type AssignExpr<'a> = ast::AssignExpr<Span<'a>>;
-type DocElem<'a> = ast::DocElem<Span<'a>>;
-type BlockChecker<'a> = ast::BlockChecker<Span<'a>>;
+#[derive(Debug, Clone)]
+pub enum PArg<'a> {
+    String(ast::StringLiteral<Span<'a>>),
+    Expr(PExpr<'a>),
+}
+
+impl<'a> PBlock<'a> {
+    pub fn add(&mut self, elem: PBlockElem<'a>) {
+        match elem {
+            PBlockElem::Func(_) => {}
+            PBlockElem::Decl { decls, .. } => self.decls.extend(decls),
+            PBlockElem::Stmt(stmt) => self.stmts.push(stmt),
+        }
+    }
+}
+
+pub type PExpr<'a> = ast::Expr<PELiteral<'a>, PArg<'a>, Span<'a>, ()>;
+pub type PStmt<'a> = ast::Stmt<PELiteral<'a>, PArg<'a>, Span<'a>, Vec<PVar<'a>>, ()>;
+pub type PBlock<'a> = ast::Block<PELiteral<'a>, PArg<'a>, Span<'a>, Vec<PVar<'a>>, ()>;
+pub type PBlockElem<'a> = ast::BlockElem<Span<'a>, PBlock<'a>, PArgs<'a>, PStmt<'a>>;
+pub type PIdentifier<'a> = ast::Identifier<Span<'a>>;
+pub type PImport<'a> = ast::Import<Span<'a>>;
+pub type PIntLiteral<'a> = ast::IntLiteral<Span<'a>>;
+pub type PELiteral<'a> = ast::ELiteral<Span<'a>>;
+pub type PBoolLiteral<'a> = ast::BoolLiteral<Span<'a>>;
+pub type PCharLiteral<'a> = ast::CharLiteral<Span<'a>>;
+pub type PStringLiteral<'a> = ast::StringLiteral<Span<'a>>;
+pub type PArgs<'a> = Vec<PVar<'a>>;
+pub type PFunction<'a> = ast::Function<PBlock<'a>, PArgs<'a>, Span<'a>>;
+pub type PVar<'a> = ast::Var<Span<'a>>;
+pub type PCall<'a> = ast::Call<Span<'a>, PArg<'a>>;
+pub type PLoc<'a> = ast::Loc<PELiteral<'a>, PArg<'a>, Span<'a>, ()>;
+pub type PAssign<'a> = ast::Assign<PELiteral<'a>, PArg<'a>, Span<'a>, ()>;
+pub type PAssignExpr<'a> = ast::AssignExpr<PELiteral<'a>, PArg<'a>, Span<'a>, ()>;
+pub type PDocElem<'a> = ast::DocElem<PBlock<'a>, PArgs<'a>, Span<'a>>;
+pub type PBlockChecker<'a> = ast::BlockChecker<'a>;
+pub type PRoot<'a> = ast::Root<Span<'a>, Vec<PVar<'a>>, Vec<PFunction<'a>>>;
+
+impl<'a> PArg<'a> {
+    pub fn from_expr(expr: PExpr<'a>) -> PArg {
+        PArg::Expr(expr)
+    }
+
+    pub fn from_string(lit: ast::StringLiteral<Span<'a>>) -> Self {
+        PArg::String(lit)
+    }
+
+    pub fn span(&self) -> &Span<'a> {
+        match self {
+            Self::String(lit) => lit.span(),
+            Self::Expr(expr) => expr.span(),
+        }
+    }
+}
+
+impl<'a> From<PStmt<'a>> for PBlockElem<'a> {
+    fn from(value: PStmt<'a>) -> Self {
+        PBlockElem::Stmt(value)
+    }
+}
+
+impl<'a> From<PFunction<'a>> for PBlockElem<'a> {
+    fn from(value: PFunction<'a>) -> Self {
+        PBlockElem::Func(value)
+    }
+}
+
+impl<'a> From<(Vec<PVar<'a>>, Span<'a>)> for PBlockElem<'a> {
+    fn from((decls, span): (Vec<PVar<'a>>, Span<'a>)) -> Self {
+        PBlockElem::Decl { span, decls }
+    }
+}
+
+impl<'a> From<PCall<'a>> for PExpr<'a> {
+    fn from(value: PCall<'a>) -> Self {
+        PExpr {
+            extra: (),
+            inner: ast::ExprInner::Call(value),
+        }
+    }
+}
+
+impl<'a> From<Spanned<'a, u8>> for PExpr<'a> {
+    fn from(value: Spanned<'a, u8>) -> Self {
+        ast::ExprInner::Literal {
+            span: value.span(),
+            value: PELiteral::Char(*value.get()),
+        }
+        .into()
+    }
+}
+
+impl<'a> From<Spanned<'a, bool>> for PExpr<'a> {
+    fn from(value: Spanned<'a, bool>) -> Self {
+        ast::ExprInner::Literal {
+            span: value.span(),
+            value: PELiteral::Bool(*value.get()),
+        }
+        .into()
+    }
+}
+
+impl<'a> From<Spanned<'a, PELiteral<'a>>> for PExpr<'a> {
+    fn from(value: Spanned<'a, PELiteral<'a>>) -> Self {
+        let (value, span) = value.into_parts();
+        ast::ExprInner::Literal { span, value }.into()
+    }
+}
+
+impl<'a> From<PELiteral<'a>> for PIntLiteral<'a> {
+    fn from(value: PELiteral<'a>) -> Self {
+        match value {
+            PELiteral::Decimal(i) => PIntLiteral::Decimal(i),
+            PELiteral::Hex(i) => PIntLiteral::Hex(i),
+            _ => panic!(),
+        }
+    }
+}
 
 impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> Parser<'a, I, EH> {
     pub fn new(tokens: I, eh: EH) -> Self {
@@ -127,9 +225,9 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         span.into_spanned(tok)
     }
 
-    fn ident(&mut self) -> Result<Identifier<'a>> {
+    fn ident(&mut self) -> Result<PIdentifier<'a>> {
         match self.peek() {
-            Token::Identifier => Ok(Identifier::from_span(self.bump().span())),
+            Token::Identifier => Ok(PIdentifier::from_span(self.bump().span())),
             _ => Err(Clean),
         }
     }
@@ -156,7 +254,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         beg.merge(self.last_pos)
     }
 
-    fn import(&mut self) -> Result<Import<'a>> {
+    fn import(&mut self) -> Result<PImport<'a>> {
         let beg = self.start_span();
         self.cur_span();
         self.consume(Token::Import)?;
@@ -170,7 +268,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             let error = self.expected_token(Token::Semicolon);
             self.report_error(error)
         });
-        Ok(Import::from_ident(span.into_spanned(identifier)))
+        Ok(PImport::from_ident(span.into_spanned(identifier)))
     }
 
     fn exact(&mut self, token: Token) -> Result<Spanned<'a, Token>> {
@@ -181,7 +279,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         }
     }
 
-    fn len_expr(&mut self) -> Result<Expr<'a>> {
+    fn len_expr(&mut self) -> Result<PExpr<'a>> {
         let beg = self.start_span();
         self.consume(Token::Len)?;
         self.consume(Token::LeftParen).map_err(|_| {
@@ -199,10 +297,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             self.report_error(error);
         });
         let span = self.end_span(beg);
-        Ok(Expr::len(ident, span))
+        Ok(PExpr::len(ident, span))
     }
 
-    fn neg(&mut self) -> Result<Expr<'a>> {
+    fn neg(&mut self) -> Result<PExpr<'a>> {
         let beg = self.start_span();
         self.consume(Token::Minus)?;
         let expr = self.unit_expr().map_err(|_| {
@@ -210,10 +308,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             Dirty
         })?;
         let span = self.end_span(beg);
-        Ok(Expr::neg(expr, span))
+        Ok(PExpr::neg(expr, span))
     }
 
-    fn not(&mut self) -> Result<Expr<'a>> {
+    fn not(&mut self) -> Result<PExpr<'a>> {
         let beg = self.start_span();
         self.consume(Token::Not)?;
         let expr = self.unit_expr().map_err(|_| {
@@ -221,10 +319,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             Dirty
         })?;
         let span = self.end_span(beg);
-        Ok(Expr::not(expr, span))
+        Ok(PExpr::not(expr, span))
     }
 
-    fn opt_index(&mut self) -> Result<Option<Expr<'a>>> {
+    fn opt_index(&mut self) -> Result<Option<PExpr<'a>>> {
         if self.peek() == Token::SquareLeft {
             _ = self.consume(Token::SquareLeft);
             let expr = self.expr().map_err(|_| {
@@ -241,7 +339,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         }
     }
 
-    fn call_or_loc(&mut self) -> Result<Or<Call<'a>, Loc<'a>>> {
+    fn call_or_loc(&mut self) -> Result<Or<PCall<'a>, PLoc<'a>>> {
         let beg = self.start_span();
         let ident = self.ident()?;
         if self.peek() == Token::LeftParen {
@@ -252,24 +350,24 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                 assert_eq!(e, Dirty);
                 Dirty
             })?;
-            Ok(Or::First(Call::new(ident, args, self.end_span(beg))))
+            Ok(Or::First(PCall::new(ident, args, self.end_span(beg))))
         } else if self.peek() == Token::SquareLeft {
             let index = self.opt_index();
             if let Ok(index) = index {
-                Ok(Or::Second(Loc::with_offset(
+                Ok(Or::Second(PLoc::with_offset(
                     ident,
                     index.unwrap(),
                     self.end_span(beg),
                 )))
             } else {
-                Ok(Or::Second(Loc::from_ident(ident)))
+                Ok(Or::Second(PLoc::from_ident(ident)))
             }
         } else {
-            Ok(Or::Second(Loc::from_ident(ident)))
+            Ok(Or::Second(PLoc::from_ident(ident)))
         }
     }
 
-    fn opt_size(&mut self) -> Result<Option<IntLiteral<'a>>> {
+    fn opt_size(&mut self) -> Result<Option<PIntLiteral<'a>>> {
         if self.peek() == Token::SquareLeft {
             self.bump();
             let lit = self.int_literal().map_err(|_| {
@@ -281,7 +379,8 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                 let error = self.expected_token(Token::SquareRight);
                 self.report_error(error)
             });
-            Ok(Some(lit))
+            let (lit, _) = lit.into_parts();
+            Ok(Some(lit.into()))
         } else {
             Ok(None)
         }
@@ -293,7 +392,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             .or(self.consume(Token::Bool).map(|_| Type::bool_type()))
     }
 
-    fn func_param(&mut self) -> Result<Var<'a>> {
+    fn func_param(&mut self) -> Result<PVar<'a>> {
         self.var_type().and_then(|ty| {
             self.ident()
                 .map_err(|_| {
@@ -301,11 +400,11 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                     self.report_error(error);
                     Dirty
                 })
-                .map(|ident| Var::scalar(ty, ident))
+                .map(|ident| PVar::scalar(ty, ident))
         })
     }
 
-    fn func_params(&mut self) -> Result<Vec<Var<'a>>> {
+    fn func_params(&mut self) -> Result<Vec<PVar<'a>>> {
         use std::iter;
         self.consume(Token::LeftParen)?;
         let first_param = self.func_param();
@@ -340,7 +439,8 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         }
     }
 
-    fn function_params_body(&mut self) -> Result<(Vec<Var<'a>>, Block<'a>)> {
+    /// parses the parameters and body, (injects the parameters into the block).
+    fn function_params_body(&mut self) -> Result<(PArgs<'a>, PBlock<'a>)> {
         let params = self.func_params().map_err(|_| {
             let error = self.expected_token(Token::LeftParen);
             self.report_error(error);
@@ -354,7 +454,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             .map(|body| (params, body))
     }
 
-    fn void_function(&mut self) -> Result<Function<'a>> {
+    fn void_function(&mut self) -> Result<PFunction<'a>> {
         let beg = self.start_span();
         self.consume(Token::Void)?;
         let name = self.ident().map_err(|_| {
@@ -363,19 +463,19 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             Dirty
         })?;
         self.function_params_body()
-            .map(|(params, body)| Function::new(name, params, body, None, self.end_span(beg)))
+            .map(|(params, body)| PFunction::new(name, body, params, None, self.end_span(beg)))
     }
 
-    fn var_decl(&mut self, ty: Type) -> Result<Var<'a>> {
+    fn var_decl(&mut self, ty: Type) -> Result<PVar<'a>> {
         let beg = self.start_span();
         self.ident().map(|ident| {
             self.opt_size()
-                .map(|size| Var::new(ty, ident.clone(), size, self.end_span(beg)))
-                .unwrap_or_else(|_| Var::scalar(ty, ident.clone()))
+                .map(|size| PVar::new(ty, ident, size, self.end_span(beg)))
+                .unwrap_or_else(|_| PVar::scalar(ty, ident))
         })
     }
 
-    fn var_list(&mut self, ty: Type) -> Result<Vec<Var<'a>>> {
+    fn var_list(&mut self, ty: Type) -> Result<Vec<PVar<'a>>> {
         use std::iter;
         self.var_decl(ty).map(|first| {
             iter::once(first)
@@ -392,9 +492,9 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         })
     }
 
-    fn field_or_function_decl(&mut self) -> Result<Or<Vec<Var<'a>>, Function<'a>>> {
+    fn field_or_function_decl(&mut self) -> Result<Or<Vec<PVar<'a>>, PFunction<'a>>> {
         let beg = self.start_span();
-        let vars_after_comma = |p: &mut Self, ty, var: Var<'a>| {
+        let vars_after_comma = |p: &mut Self, ty, var: PVar<'a>| {
             p.bump();
             let vars = p
                 .var_list(ty)
@@ -427,10 +527,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                     Token::LeftParen => self
                         .function_params_body()
                         .map(|(params, body)| {
-                            Or::Second(Function::new(
+                            Or::Second(PFunction::new(
                                 ident,
-                                params,
                                 body,
+                                params,
                                 Some(ty),
                                 self.end_span(beg),
                             ))
@@ -444,14 +544,9 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                         let var = self
                             .opt_size()
                             .map(|size| {
-                                Var::array(
-                                    ty,
-                                    ident.clone(),
-                                    size.unwrap(),
-                                    self.end_span(*ident.span()),
-                                )
+                                PVar::array(ty, ident, size.unwrap(), self.end_span(*ident.span()))
                             })
-                            .unwrap_or_else(|_| Var::scalar(ty, ident));
+                            .unwrap_or_else(|_| PVar::scalar(ty, ident));
                         if self.peek() == Token::Comma {
                             vars_after_comma(self, ty, var)
                         } else {
@@ -462,15 +557,15 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                             Ok(Or::First(vec![var]))
                         }
                     }
-                    Token::Comma => vars_after_comma(self, ty, Var::scalar(ty, ident)),
+                    Token::Comma => vars_after_comma(self, ty, PVar::scalar(ty, ident)),
                     Token::Semicolon => {
                         self.bump();
-                        Ok(Or::First(vec![Var::scalar(ty, ident)]))
+                        Ok(Or::First(vec![PVar::scalar(ty, ident)]))
                     }
                     _ => {
                         let error = self.expected_token(Token::Semicolon);
                         self.report_error(error);
-                        Ok(Or::First(vec![Var::scalar(ty, ident)]))
+                        Ok(Or::First(vec![PVar::scalar(ty, ident)]))
                     }
                 }
             }
@@ -478,7 +573,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         }
     }
 
-    fn nested_expr(&mut self) -> Result<Expr<'a>> {
+    fn nested_expr(&mut self) -> Result<PExpr<'a>> {
         let beg = self.start_span();
         self.consume(Token::LeftParen)?;
         let expr = self.expr().map_err(|_| {
@@ -488,33 +583,39 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         _ = self
             .consume(Token::RightParen)
             .map_err(|_| self.report_error(ExpectedMatching(Token::LeftParen, Token::RightParen)));
-        Ok(Expr::nested(expr, self.end_span(beg)))
+        Ok(PExpr::nested(expr, self.end_span(beg)))
     }
 
-    fn int_literal(&mut self) -> Result<IntLiteral<'a>> {
+    fn int_literal(&mut self) -> Result<Spanned<'a, PELiteral<'a>>> {
         match self.peek() {
-            Token::DecimalLiteral => Ok(IntLiteral::from_decimal(self.bump().span())),
-            Token::HexLiteral => Ok(IntLiteral::from_hex(self.bump().span())),
+            Token::DecimalLiteral => Ok({
+                let span = self.bump().span();
+                span.into_spanned(PELiteral::decimal(span))
+            }),
+            Token::HexLiteral => Ok({
+                let span = self.bump().span();
+                span.into_spanned(PELiteral::hex(span.split_at(2).1))
+            }),
             _ => Err(Clean),
         }
     }
 
-    fn bool_literal(&mut self) -> Result<BoolLiteral<'a>> {
+    fn bool_literal(&mut self) -> Result<Spanned<'a, bool>> {
         match self.peek() {
-            Token::True => Ok(BoolLiteral::from_spanned(self.bump().map(|_| true))),
-            Token::False => Ok(BoolLiteral::from_spanned(self.bump().map(|_| false))),
+            Token::True => Ok(self.bump().map(|_| true)),
+            Token::False => Ok(self.bump().map(|_| false)),
             _ => Err(Clean),
         }
     }
 
-    fn char_literal(&mut self) -> Result<CharLiteral<'a>> {
+    fn char_literal(&mut self) -> Result<Spanned<'a, u8>> {
         match self.peek() {
-            Token::CharLiteral(c) => Ok(CharLiteral::from_spanned(self.bump().map(|_| c))),
+            Token::CharLiteral(c) => Ok(self.bump().map(|_| c)),
             _ => Err(Clean),
         }
     }
 
-    fn expr(&mut self) -> Result<Expr<'a>> {
+    fn expr(&mut self) -> Result<PExpr<'a>> {
         let beg = self.start_span();
         let e1 = self.or()?;
         match self.peek() {
@@ -532,7 +633,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                     self.report_error(ExpectedExpression);
                     Dirty
                 })?;
-                Ok(Expr::ter(e1, yes, no, self.end_span(beg)))
+                Ok(PExpr::ter(e1, yes, no, self.end_span(beg)))
             }
             _ => Ok(e1),
         }
@@ -588,22 +689,22 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
 
     binop!(or, and, Or => Or,);
 
-    fn string_literal(&mut self) -> Result<StringLiteral<'a>> {
+    fn string_literal(&mut self) -> Result<PStringLiteral<'a>> {
         match self.peek() {
-            Token::StringLiteral => Ok(StringLiteral::from_span(self.bump().span())),
+            Token::StringLiteral => Ok(PStringLiteral::from_span(self.bump().span())),
             _ => Err(Clean),
         }
     }
 
-    fn call_arg(&mut self) -> Result<Arg<'a>> {
+    fn call_arg(&mut self) -> Result<PArg<'a>> {
         // NOTE: The order matters here since string_literal can not return a dirty error signal so
         // we start with it.
         self.string_literal()
-            .map(Arg::from_string)
-            .or_else(|_| self.expr().map(Arg::from_expr))
+            .map(PArg::from_string)
+            .or_else(|_| self.expr().map(PArg::from_expr))
     }
 
-    fn call_args(&mut self) -> Result<Vec<Arg<'a>>> {
+    fn call_args(&mut self) -> Result<Vec<PArg<'a>>> {
         use std::iter;
         self.consume(Token::LeftParen)?;
         let args = self
@@ -624,7 +725,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         Ok(args)
     }
 
-    fn eliteral(&mut self) -> Result<Expr<'a>> {
+    fn eliteral(&mut self) -> Result<PExpr<'a>> {
         self.int_literal()
             .map(|i| i.into())
             .or_else(|e| {
@@ -637,7 +738,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn unit_expr(&mut self) -> Result<Expr<'a>> {
+    fn unit_expr(&mut self) -> Result<PExpr<'a>> {
         self.len_expr()
             .or_else(|e| {
                 if e == Dirty {
@@ -667,7 +768,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn block_elem(&mut self) -> Result<BlockElem<'a>> {
+    fn block_elem(&mut self) -> Result<PBlockElem<'a>> {
         let beg = self.start_span();
         self.field_or_function_decl()
             .map(|decl_or_func| match decl_or_func {
@@ -684,10 +785,10 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
     }
 
     // FIXME: the block can terminate with a really messed up status.
-    fn block(&mut self) -> Result<Block<'a>> {
+    fn block(&mut self) -> Result<PBlock<'a>> {
         use std::iter;
         self.consume(Token::CurlyLeft)?;
-        let mut block_checker = BlockChecker::new();
+        let mut block_checker = PBlockChecker::new();
         Ok(iter::from_fn(|| {
             // if it returns an error then we did not finish the block yet so we can continue
             self.consume(Token::CurlyRight).err()?;
@@ -722,14 +823,14 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                 }
             }
         })
-        .fold(Block::new(), |mut block, elem| {
+        .fold(PBlock::new(), |mut block, elem| {
             block.add(elem);
             block
         }))
     }
 
     /// parses if statements, allows parsing conditions that is not surrounded by `()`
-    fn if_stmt(&mut self) -> Result<Stmt<'a>> {
+    fn if_stmt(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::If)?;
         let cond = self.expr().map_err(|_| {
@@ -744,18 +845,18 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         })?;
         if self.consume(Token::Else).is_ok() {
             self.block()
-                .map(|no| Stmt::if_stmt(cond, yes, Some(no), self.end_span(beg)))
+                .map(|no| PStmt::if_stmt(cond, yes, Some(no), self.end_span(beg)))
                 .map_err(|err| {
                     assert_eq!(err, Clean);
                     self.report_error(ExpectedBlock);
                     Dirty
                 })
         } else {
-            Ok(Stmt::if_stmt(cond, yes, None, self.end_span(beg)))
+            Ok(PStmt::if_stmt(cond, yes, None, self.end_span(beg)))
         }
     }
 
-    fn while_stmt(&mut self) -> Result<Stmt<'a>> {
+    fn while_stmt(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::While)?;
         let cond = self.expr().map_err(|_| {
@@ -763,7 +864,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             Dirty
         })?;
         self.block()
-            .map(|body| Stmt::while_stmt(cond, body, self.end_span(beg)))
+            .map(|body| PStmt::while_stmt(cond, body, self.end_span(beg)))
             .map_err(|e| {
                 assert_eq!(e, Clean);
                 self.report_error(ExpectedBlock);
@@ -771,15 +872,15 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn return_stmt(&mut self) -> Result<Stmt<'a>> {
+    fn return_stmt(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::Return)?;
-        let expr =
-            self.expr()
-                .map(Some)
-                .or_else(|e| if e == Dirty { Err(Dirty) } else { Ok(None) })?;
+        let expr = self
+            .expr()
+            .map(Some)
+            .or_else(|e| if e == Dirty { Err(Dirty) } else { Ok(None) })?;
         self.consume(Token::Semicolon)
-            .map(|_| Stmt::return_stmt(expr, self.end_span(beg)))
+            .map(|_| PStmt::return_stmt(expr, self.end_span(beg)))
             .map_err(|_| {
                 let error = self.expected_token(Token::Semicolon);
                 self.report_error(error);
@@ -787,11 +888,11 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn break_stmt(&mut self) -> Result<Stmt<'a>> {
+    fn break_stmt(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::Break)?;
         self.consume(Token::Semicolon)
-            .map(|_| Stmt::break_stmt(self.end_span(beg)))
+            .map(|_| PStmt::break_stmt(self.end_span(beg)))
             .map_err(|_| {
                 let error = self.expected_token(Token::Semicolon);
                 self.report_error(error);
@@ -799,11 +900,11 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn continue_stmt(&mut self) -> Result<Stmt<'a>> {
+    fn continue_stmt(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::Continue)?;
         self.consume(Token::Semicolon)
-            .map(|_| Stmt::continue_stmt(self.end_span(beg)))
+            .map(|_| PStmt::continue_stmt(self.end_span(beg)))
             .map_err(|_| {
                 let error = self.expected_token(Token::Semicolon);
                 self.report_error(error);
@@ -811,41 +912,41 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn assign_expr(&mut self) -> Result<AssignExpr<'a>> {
+    fn assign_expr(&mut self) -> Result<PAssignExpr<'a>> {
         match self.peek() {
             Token::Increment => {
                 self.bump();
-                Ok(AssignExpr::inc())
+                Ok(PAssignExpr::inc())
             }
             Token::Decrement => {
                 self.bump();
-                Ok(AssignExpr::dec())
+                Ok(PAssignExpr::dec())
             }
             Token::Assign => {
                 self.bump();
-                self.expr().map(AssignExpr::assign)
+                self.expr().map(PAssignExpr::assign)
             }
             Token::AddAssign => {
                 self.bump();
-                self.expr().map(AssignExpr::add_assign)
+                self.expr().map(PAssignExpr::add_assign)
             }
             Token::SubAssign => {
                 self.bump();
-                self.expr().map(AssignExpr::sub_assign)
+                self.expr().map(PAssignExpr::sub_assign)
             }
             _ => Err(Clean),
         }
     }
 
-    fn call_or_assignment(&mut self) -> Result<Stmt<'a>> {
+    fn call_or_assignment(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         let stmt = self
             .call_or_loc()
             .and_then(|call_or_loc| match call_or_loc {
-                Or::First(call) => Ok(Stmt::call_stmt(call)),
+                Or::First(call) => Ok(PStmt::call_stmt(call)),
                 Or::Second(loc) => self
                     .assign_expr()
-                    .map(|assignexpr| Assign::new(loc, assignexpr, self.end_span(beg)).into())
+                    .map(|assignexpr| PAssign::new(loc, assignexpr, self.end_span(beg)).into())
                     .map_err(|_| {
                         self.report_error(ExpectedAssignExpr);
                         Dirty
@@ -858,21 +959,21 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         Ok(stmt)
     }
 
-    fn loc(&mut self) -> Result<Loc<'a>> {
+    fn loc(&mut self) -> Result<PLoc<'a>> {
         let beg = self.cur_span();
         self.ident().and_then(|ident| {
             self.opt_index().map(|index| match index {
-                Some(index) => Loc::with_offset(ident, index, beg.merge(self.cur_span())),
-                None => Loc::from_ident(ident),
+                Some(index) => PLoc::with_offset(ident, index, beg.merge(self.cur_span())),
+                None => PLoc::from_ident(ident),
             })
         })
     }
 
-    fn assign(&mut self) -> Result<Assign<'a>> {
+    fn assign(&mut self) -> Result<PAssign<'a>> {
         let beg = self.start_span();
         self.loc().and_then(|loc| {
             self.assign_expr()
-                .map(|assignexpr| Assign::new(loc, assignexpr, self.end_span(beg)))
+                .map(|assignexpr| PAssign::new(loc, assignexpr, self.end_span(beg)))
                 .map_err(|_| {
                     self.report_error(ExpectedAssignExpr);
                     Dirty
@@ -901,7 +1002,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         })
     }
 
-    fn for_inner_parens(&mut self) -> Result<(Assign<'a>, Expr<'a>, Assign<'a>)> {
+    fn for_inner_parens(&mut self) -> Result<(PAssign<'a>, PExpr<'a>, PAssign<'a>)> {
         let assign = self.assign()?;
         _ = self.consume(Token::Semicolon).map_err(|_| {
             let error = self.expected_token(Token::Semicolon);
@@ -926,7 +1027,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
         Ok((assign, expr, update))
     }
 
-    fn for_stmt(&mut self) -> Result<Stmt<'a>> {
+    fn for_stmt(&mut self) -> Result<PStmt<'a>> {
         let beg = self.start_span();
         self.consume(Token::For)?;
         self.consume(Token::LeftParen).map_err(|_| {
@@ -942,10 +1043,16 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             self.report_error(ExpectedBlock);
             Dirty
         })?;
-        Ok(Stmt::for_stmt(init, cond, update, body, self.end_span(beg)))
+        Ok(PStmt::for_stmt(
+            init,
+            cond,
+            update,
+            body,
+            self.end_span(beg),
+        ))
     }
 
-    fn stmt(&mut self) -> Result<Stmt<'a>> {
+    fn stmt(&mut self) -> Result<PStmt<'a>> {
         self.if_stmt()
             .or_else(|e| {
                 if e == Dirty {
@@ -995,23 +1102,23 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
             })
     }
 
-    fn doc_elem(&mut self) -> Result<DocElem<'a>> {
+    fn doc_elem(&mut self) -> Result<PDocElem<'a>> {
         let beg = self.start_span();
         self.field_or_function_decl()
             .map(|field_or_func| match field_or_func {
-                Or::First(field) => DocElem::decl(field, self.end_span(beg)),
-                Or::Second(func) => DocElem::function(func),
+                Or::First(field) => PDocElem::decl(field, self.end_span(beg)),
+                Or::Second(func) => PDocElem::function(func),
             })
             .or_else(|e| {
                 if e == Dirty {
                     Err(Dirty)
                 } else {
-                    self.import().map(DocElem::import)
+                    self.import().map(PDocElem::import)
                 }
             })
     }
 
-    pub fn doc_elems(&mut self) -> impl Iterator<Item = DocElem<'a>> + '_ {
+    pub fn doc_elems(&mut self) -> impl Iterator<Item = PDocElem<'a>> + '_ {
         use std::iter;
         let mut elem_checker = RootChecker::new();
         iter::from_fn(move || {
@@ -1021,6 +1128,19 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Spanned<'a, Error>)> 
                     Some(doc_elem)
                 })
                 .unwrap_or_else(|_| None)
+        })
+    }
+}
+
+impl<'a> FromIterator<PDocElem<'a>> for PRoot<'a> {
+    fn from_iter<T: IntoIterator<Item = PDocElem<'a>>>(iter: T) -> Self {
+        iter.into_iter().fold(PRoot::default(), |mut root, elem| {
+            match elem {
+                PDocElem::Decl(decls, _) => root.decls.extend(decls),
+                PDocElem::Function(func) => root.funcs.push(func),
+                PDocElem::Import(import) => root.imports.push(import),
+            };
+            root
         })
     }
 }

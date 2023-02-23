@@ -1,9 +1,10 @@
 use std::io::stderr;
 
-use crate::{lexer::Lexer, parser::Parser};
+use crate::{lexer::Lexer, parser::Parser, semantics::Semantics};
 
 mod lexer;
 mod parser;
+mod semantics;
 
 trait App {
     fn run(
@@ -24,6 +25,7 @@ pub enum ExitStatus {
 enum Mode {
     Lexer,
     Parser,
+    Semantics,
 }
 
 struct Config {
@@ -49,6 +51,8 @@ impl Config {
             "scanner" => Some(Mode::Lexer),
             "parser" => Some(Mode::Parser),
             "parse" => Some(Mode::Parser),
+            "semantics" => Some(Mode::Semantics),
+            "semantic" => Some(Mode::Semantics),
             _ => None,
         }
     }
@@ -102,6 +106,11 @@ fn main() {
             config.input_file.unwrap_or("/dev/stdin".to_string()),
         ),
         Some(Mode::Parser) => Parser::run(
+            &mut output_stream,
+            &mut stderr,
+            config.input_file.unwrap_or("/dev/stdin".to_string()),
+        ),
+        Some(Mode::Semantics) => Semantics::run(
             &mut output_stream,
             &mut stderr,
             config.input_file.unwrap_or("/dev/stdin".to_string()),
