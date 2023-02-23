@@ -2,9 +2,9 @@ use super::*;
 use crate::ExitStatus;
 use seq_macro::seq;
 
-/// a macro to generate tests.
+/// a macro to generate tests for illegal files.
 macro_rules! test_illegal {
-    ($name:ident, $num:literal, $hidden:literal) => {
+    ($name:ident, $num:literal, $hidden:literal, $prefix:literal) => {
         #[test]
         fn $name() {
             let test = concat!(
@@ -24,6 +24,24 @@ macro_rules! test_illegal {
     };
     ($name:ident, $num:literal) => {
         test_illegal!($name, $num, "", "");
+    };
+}
+
+macro_rules! test_legal {
+    ($name:ident, $num:literal) => {
+        #[test]
+        fn $name() {
+            let test = concat!(
+                "decaf-tests/semantics-hidden/legal/hidden-legal-",
+                stringify!($num),
+                ".dcf"
+            );
+
+            assert_eq!(
+                Semantics::run(&mut std::io::sink(), &mut std::io::sink(), test.to_string()),
+                ExitStatus::Success
+            )
+        }
     };
 }
 
@@ -92,4 +110,8 @@ seq!(N in 01..=03 {
 });
 seq!(N in 01..=02 {
     test_illegal!(hidden_illegal_rule_22_~N, N, "-hidden", "rule-22-");
+});
+
+seq!(N in 01..=20 {
+    test_legal!(legal_~N, N);
 });
