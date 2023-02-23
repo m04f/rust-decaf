@@ -37,6 +37,7 @@ pub enum Error<'a> {
     TooLargeInt(Span<'a>),
     RootDoesNotContainMain,
     InvalidMainSig(Span<'a>),
+    VariableNotAMethod(Span<'a>),
 }
 
 impl ast::Op {
@@ -561,44 +562,48 @@ impl<'a> HIRCall<'a> {
         vst: VSymMap<'a, '_>,
         fst: FSymMap<'a, '_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        match fst.get_sym(*call.name.span()) {
-            None => Err(vec![Error::UndeclaredIdentifier(*call.name.span())]),
-            Some(FunctionSig::Extern(..)) => call
-                .args
-                .into_iter()
-                .map(|arg| HIRArg::extern_from_pcall(arg, vst, fst))
-                .fold_result()
-                .map(|args| HIRCall {
-                    name: call.name,
-                    args,
-                    span: call.span,
-                }),
-            Some(FunctionSig::Decl { arg_types, .. }) => {
-                if call.args.len() == arg_types.len() {
-                    call.args
-                        .into_iter()
-                        .zip(arg_types.iter())
-                        .map(|(arg, ty)| {
-                            HIRArg::user_defined_from_pcall(arg, vst, fst).and_then(|arg| {
-                                if arg.ty().unwrap() != *ty {
-                                    Err(vec![Error::ExpectedType(*ty, *arg.span())])
-                                } else {
-                                    Ok(arg)
-                                }
+        if vst.get_sym(*call.name.span()).is_some() {
+            Err(vec![Error::VariableNotAMethod(*call.name.span())])
+        } else {
+            match fst.get_sym(*call.name.span()) {
+                None => Err(vec![Error::UndeclaredIdentifier(*call.name.span())]),
+                Some(FunctionSig::Extern(..)) => call
+                    .args
+                    .into_iter()
+                    .map(|arg| HIRArg::extern_from_pcall(arg, vst, fst))
+                    .fold_result()
+                    .map(|args| HIRCall {
+                        name: call.name,
+                        args,
+                        span: call.span,
+                    }),
+                Some(FunctionSig::Decl { arg_types, .. }) => {
+                    if call.args.len() == arg_types.len() {
+                        call.args
+                            .into_iter()
+                            .zip(arg_types.iter())
+                            .map(|(arg, ty)| {
+                                HIRArg::user_defined_from_pcall(arg, vst, fst).and_then(|arg| {
+                                    if arg.ty().unwrap() != *ty {
+                                        Err(vec![Error::ExpectedType(*ty, *arg.span())])
+                                    } else {
+                                        Ok(arg)
+                                    }
+                                })
                             })
-                        })
-                        .fold_result()
-                        .map(|args| HIRCall {
-                            name: call.name,
-                            args,
-                            span: call.span,
-                        })
-                } else {
-                    Err(vec![Error::WrongNumberOfArgs {
-                        expected: arg_types.len(),
-                        found: call.args.len(),
-                        span: *call.name.span(),
-                    }])
+                            .fold_result()
+                            .map(|args| HIRCall {
+                                name: call.name,
+                                args,
+                                span: call.span,
+                            })
+                    } else {
+                        Err(vec![Error::WrongNumberOfArgs {
+                            expected: arg_types.len(),
+                            found: call.args.len(),
+                            span: *call.name.span(),
+                        }])
+                    }
                 }
             }
         }
