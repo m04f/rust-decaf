@@ -36,6 +36,7 @@ pub enum Error<'a> {
     ZeroArraySize(Span<'a>),
     TooLargeInt(Span<'a>),
     RootDoesNotContainMain,
+    InvalidMainSig(Span<'a>),
 }
 
 impl ast::Op {
@@ -1028,12 +1029,16 @@ impl<'a> HIRRoot<'a> {
                 Err(redefs)
             }
         }?;
-        if functions.keys().any(|key| key.source() == b"main") {
-            Ok(Self {
-                globals,
-                functions,
-                imports,
-            })
+        if let Some((_, f)) = functions.iter().find(|&(s, _)| s.source() == b"main") {
+            if f.ret.is_some() || !f.args.is_empty() {
+                Err(vec![Error::InvalidMainSig(*f.span())])
+            } else {
+                Ok(Self {
+                    globals,
+                    functions,
+                    imports,
+                })
+            }
         } else {
             Err(vec![Error::RootDoesNotContainMain])
         }
