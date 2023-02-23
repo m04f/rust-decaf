@@ -697,19 +697,8 @@ impl<'a> HIRAssign<'a> {
 
 fn construct_sig_hashmap<'a>(
     externs: &[PImport<'a>],
-    funcs: &[PFunction<'a>],
 ) -> Result<HashMap<Span<'a>, FunctionSig<'a>>, Vec<Error<'a>>> {
     let mut errors = vec![];
-    for i in 0..funcs.len() {
-        for j in 0..i {
-            if funcs[i].name == funcs[j].name {
-                errors.push(Error::Redifinition(
-                    *funcs[i].name.span(),
-                    *funcs[j].name.span(),
-                ));
-            }
-        }
-    }
     for i in 0..externs.len() {
         for j in 0..i {
             if externs[i].name() == externs[j].name() {
@@ -721,14 +710,9 @@ fn construct_sig_hashmap<'a>(
         }
     }
     if errors.is_empty() {
-        Ok(funcs
+        Ok(externs
             .iter()
-            .map(|f| (*f.name.span(), FunctionSig::from_pfunction(f)))
-            .chain(
-                externs
-                    .iter()
-                    .map(|f| (*f.name().span(), FunctionSig::from_pimport(f))),
-            )
+            .map(|f| (*f.name().span(), FunctionSig::from_pimport(f)))
             .collect())
     } else {
         Err(errors)
@@ -1008,21 +992,28 @@ impl<'a> HIRFunction<'a> {
 impl<'a> HIRRoot<'a> {
     pub fn from_proot(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
         let globals = construct_var_hashmap(root.decls)?;
-        let sigs = construct_sig_hashmap(&root.imports, &root.funcs)?;
-        let functions = root
-            .funcs
-            .into_iter()
-            .map(|f| {
-                HIRFunction::from_pfunction(f, VSymMap::new(&globals), FSymMap::new(&sigs))
-                    .map(|f| (*f.name.span(), f))
-            })
-            .fold_result()?
-            .into_iter()
-            .collect::<HashMap<_, _>>();
+        let mut sigs = construct_sig_hashmap(&root.imports)?;
         let imports = root
             .imports
             .into_iter()
             .map(|imp| (*imp.name().span(), imp))
+            .collect::<HashMap<_, _>>();
+        let functions = root
+            .funcs
+            .into_iter()
+            .map(|f| {
+                let sig = FunctionSig::from_pfunction(&f);
+                let func_span = *f.name.span();
+                if let Some(func) = sigs.get(&func_span) {
+                    return Err(vec![Error::Redifinition(func_span, func.name())]);
+                }
+                let r = HIRFunction::from_pfunction(f, VSymMap::new(&globals), FSymMap::new(&sigs))
+                    .map(|f| (*f.name.span(), f));
+                sigs.insert(func_span, sig);
+                r
+            })
+            .fold_result()?
+            .into_iter()
             .collect::<HashMap<_, _>>();
         {
             let mut redefs = intersect(&imports, &globals);
