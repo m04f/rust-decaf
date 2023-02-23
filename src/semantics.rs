@@ -153,7 +153,7 @@ impl HIRLiteral {
                 .ok_or(vec![Error::TooLargeInt(num)])
                 .map(HIRLiteral::Int),
             ast::ELiteral::Bool(val) => Ok(HIRLiteral::Bool(val)),
-            _ => unimplemented!(),
+            ast::ELiteral::Char(c) => Ok(HIRLiteral::Int(c.into())),
         }
     }
 }
