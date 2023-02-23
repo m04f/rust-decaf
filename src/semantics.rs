@@ -35,6 +35,7 @@ pub enum Error<'a> {
     ExpectedExpression(Span<'a>),
     ZeroArraySize(Span<'a>),
     TooLargeInt(Span<'a>),
+    RootDoesNotContainMain,
 }
 
 impl ast::Op {
@@ -1009,16 +1010,20 @@ impl<'a> HIRRoot<'a> {
             })
             .fold_result()?
             .into_iter()
-            .collect();
+            .collect::<HashMap<_, _>>();
         let imports = root
             .imports
             .into_iter()
             .map(|imp| (*imp.name().span(), imp))
             .collect();
-        Ok(Self {
-            globals,
-            functions,
-            imports,
-        })
+        if functions.keys().any(|key| key.source() == b"main") {
+            Ok(Self {
+                globals,
+                functions,
+                imports,
+            })
+        } else {
+            Err(vec![Error::RootDoesNotContainMain])
+        }
     }
 }
