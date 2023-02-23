@@ -194,20 +194,6 @@ impl FunctionSig<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum BlockCtx {
-    If,
-    While,
-    For,
-    Function,
-}
-
-impl BlockCtx {
-    fn is_loop(&self) -> bool {
-        matches!(self, Self::While | Self::For)
-    }
-}
-
 pub type SymMap<'a, T> = HashMap<Span<'a>, T>;
 pub type VarSymMap<'a> = SymMap<'a, Var<Span<'a>>>;
 pub type FuncSymMap<'a> = SymMap<'a, HIRFunction<'a>>;
@@ -780,7 +766,7 @@ fn construct_var_hashmap(
 impl<'a> StmtBlock<'a> {
     fn from_pblock(
         block: PBlock<'a>,
-        ctx: BlockCtx,
+        in_loop: bool,
         expected_return: Option<Type>,
         vst: VSymMap<'a, '_>,
         fst: FSymMap<'a, '_>,
@@ -792,7 +778,7 @@ impl<'a> StmtBlock<'a> {
             .map(|stmt| {
                 HIRStmt::from_pstmt(
                     stmt,
-                    ctx,
+                    in_loop,
                     expected_return,
                     VSymMap::new(&block_vst).parent(&vst),
                     fst,
@@ -809,7 +795,7 @@ impl<'a> StmtBlock<'a> {
 impl<'a> HIRStmt<'a> {
     fn from_pstmt(
         stmt: PStmt<'a>,
-        ctx: BlockCtx,
+        in_loop: bool,
         expected_return: Option<Type>,
         vst: VSymMap<'a, '_>,
         fst: FSymMap<'a, '_>,
@@ -838,14 +824,14 @@ impl<'a> HIRStmt<'a> {
                 }
             },
             ast::Stmt::Break(span) => {
-                if ctx.is_loop() {
+                if in_loop {
                     Ok(Self::Break(span))
                 } else {
                     Err(vec![Error::BreakOutsideLoop(span)])
                 }
             }
             ast::Stmt::Continue(span) => {
-                if ctx.is_loop() {
+                if in_loop {
                     Ok(Self::Continue(span))
                 } else {
                     Err(vec![Error::ContinueOutsideLoop(span)])
@@ -861,9 +847,9 @@ impl<'a> HIRStmt<'a> {
                 span,
             } => {
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
-                let yes = HIRBlock::from_pblock(yes, BlockCtx::If, expected_return, vst, fst);
+                let yes = HIRBlock::from_pblock(yes, in_loop, expected_return, vst, fst);
                 let no =
-                    no.map(|no| HIRBlock::from_pblock(no, BlockCtx::If, expected_return, vst, fst));
+                    no.map(|no| HIRBlock::from_pblock(no, in_loop, expected_return, vst, fst));
                 if cond.is_ok() && yes.is_ok() && no.is_none() {
                     if cond.as_ref().unwrap().ty() != Type::Bool {
                         Err(vec![Error::ExpectedBoolExpr(
@@ -912,7 +898,7 @@ impl<'a> HIRStmt<'a> {
             }
             ast::Stmt::While { cond, body, span } => {
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
-                let body = HIRBlock::from_pblock(body, BlockCtx::While, expected_return, vst, fst);
+                let body = HIRBlock::from_pblock(body, true, expected_return, vst, fst);
                 if cond.is_ok() && body.is_ok() {
                     if cond.as_ref().unwrap().is_boolean() {
                         Ok(Self::While {
@@ -944,7 +930,7 @@ impl<'a> HIRStmt<'a> {
                 let init = HIRAssign::from_passign(init, vst, fst);
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
                 let update = HIRAssign::from_passign(update, vst, fst);
-                let body = StmtBlock::from_pblock(body, BlockCtx::For, expected_return, vst, fst);
+                let body = StmtBlock::from_pblock(body, true, expected_return, vst, fst);
                 if init.is_ok() && cond.is_ok() && update.is_ok() && body.is_ok() {
                     if cond.as_ref().unwrap().is_boolean() {
                         Ok(Self::For {
@@ -990,7 +976,7 @@ impl<'a> HIRFunction<'a> {
         let args = construct_var_hashmap(func.args)?;
         let body = HIRBlock::from_pblock(
             func.body,
-            BlockCtx::Function,
+            false,
             func.ret,
             VSymMap::new(&args).parent(&vst),
             fst,
