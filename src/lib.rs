@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![allow(clippy::redundant_closure)]
 #![feature(if_let_guard)]
 
 pub mod ast;
