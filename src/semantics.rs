@@ -1002,14 +1002,13 @@ impl<'a> HIRRoot<'a> {
             .funcs
             .into_iter()
             .map(|f| {
-                let sig = FunctionSig::from_pfunction(&f);
                 let func_span = *f.name.span();
                 if let Some(func) = sigs.get(&func_span) {
                     return Err(vec![Error::Redifinition(func_span, func.name())]);
                 }
+                sigs.insert(func_span, FunctionSig::from_pfunction(&f));
                 let r = HIRFunction::from_pfunction(f, VSymMap::new(&globals), FSymMap::new(&sigs))
                     .map(|f| (*f.name.span(), f));
-                sigs.insert(func_span, sig);
                 r
             })
             .fold_result()?
