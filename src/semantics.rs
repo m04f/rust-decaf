@@ -966,6 +966,15 @@ impl<'a> HIRStmt<'a> {
     }
 }
 
+fn intersect<'a, O1, O2>(
+    map1: &HashMap<Span<'a>, O1>,
+    map2: &HashMap<Span<'a>, O2>,
+) -> Vec<Error<'a>> {
+    map2.iter()
+        .filter_map(|(span, _)| map1.get(span).map(|_| Error::Redifinition(*span, *span)))
+        .collect()
+}
+
 impl<'a> HIRFunction<'a> {
     fn from_pfunction(
         func: PFunction<'a>,
@@ -981,14 +990,7 @@ impl<'a> HIRFunction<'a> {
             VSymMap::new(&args).parent(&vst),
             fst,
         )?;
-        let redefs = body
-            .decls
-            .keys()
-            .filter_map(|sym| {
-                args.get(sym)
-                    .map(|arg| Error::Redifinition(*arg.span(), *sym))
-            })
-            .collect::<Vec<_>>();
+        let redefs = intersect(&body.decls, &args);
         if redefs.is_empty() {
             Ok(Self::new(func.name, body, args, func.ret, span))
         } else {
@@ -1015,7 +1017,17 @@ impl<'a> HIRRoot<'a> {
             .imports
             .into_iter()
             .map(|imp| (*imp.name().span(), imp))
-            .collect();
+            .collect::<HashMap<_, _>>();
+        {
+            let mut redefs = intersect(&imports, &globals);
+            redefs.extend(intersect(&imports, &functions));
+            redefs.extend(intersect(&globals, &functions));
+            if redefs.is_empty() {
+                Ok(())
+            } else {
+                Err(redefs)
+            }
+        }?;
         if functions.keys().any(|key| key.source() == b"main") {
             Ok(Self {
                 globals,
