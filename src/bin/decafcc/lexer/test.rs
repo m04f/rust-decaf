@@ -99,63 +99,49 @@ macro_rules! test_hidden {
 }
 
 mod public {
-    test!(char1);
-    test!(char2);
-    test!(char3);
-    test!(char4);
-    test!(char5);
-    test!(char6);
-    test!(char7);
-    test!(char8);
-    test!(char9);
-    test!(hexlit1);
-    test!(hexlit2);
-    test!(id1);
-    test!(id2);
-    test!(id3);
-    test!(number1);
-    test!(number2);
-    test!(number3);
-    test!(op1);
-    test!(op2);
-    test!(op3);
-    test!(string1);
-    test!(string2);
-    test!(string3);
-    test!(tokens1);
-    test!(tokens2);
-    test!(tokens3);
-    test!(tokens4);
-    test!(ws1);
-    test!(ws2);
+    use seq_macro::seq;
+    seq!(N in 1..=9 {
+        test!(char~N);
+    });
+    seq!(N in 1..=2 {
+        test!(hexlit~N);
+    });
+    seq!(N in 1..=3 {
+        test!(id~N);
+        test!(number~N);
+        test!(op~N);
+        test!(string~N);
+    });
+    seq!(N in 1..=4 {
+        test!(tokens~N);
+    });
+    seq!(N in 1..=2 {
+        test!(ws~N);
+    });
 }
 
 mod hidden {
-    test_hidden!(char10);
-    test_hidden!(char11);
-    test_hidden!(char12);
-    test_hidden!(char13);
-    test_hidden!(char14);
-    test_hidden!(char15);
+    use seq_macro::seq;
+    seq!(N in 10..=15 {
+        test_hidden!(char~N);
+    });
     test_hidden!(hexlit4);
-    test_hidden!(id4);
-    test_hidden!(id5);
-    test_hidden!(literal1);
-    test_hidden!(literal2);
-    test_hidden!(literal3);
-    test_hidden!(literal4);
-    test_hidden!(literal5);
-    test_hidden!(literal6);
+    seq!(N in 4..=5 {
+        test_hidden!(id~N);
+    });
+    seq!(N in 1..=6 {
+        test_hidden!(literal~N);
+    });
     test_hidden!(literals);
-    test_hidden!(number4);
-    test_hidden!(number5);
-    test_hidden!(op4);
-    test_hidden!(op5);
-    test_hidden!(op6);
-    test_hidden!(op7);
-    test_hidden!(op8);
+    seq!(N in 4..=5 {
+        test_hidden!(number~N);
+    });
+    seq!(N in 4..=8 {
+        test_hidden!(op~N);
+    });
     test_hidden!(string4);
-    test_hidden!(tokens5);
-    test_hidden!(tokens6);
+    seq!(N in 5..=6 {
+        test_hidden!(tokens~N);
+    });
     test_hidden!(variants);
 }

@@ -5,3 +5,12 @@ version = 3
 [[package]]
 name = "dcfrs"
 version = "0.1.0"
+dependencies = [
+ "seq-macro",
+]
+
+[[package]]
+name = "seq-macro"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1685deded9b272198423bdbdb907d8519def2f26cf3699040e54e8c4fbd5c5ce"

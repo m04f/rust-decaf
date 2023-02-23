@@ -7,3 +7,6 @@ edition = "2021"
 
 [[bin]]
 name = "decafcc"
+
+[dev-dependencies]
+seq-macro = "0.3.2"
