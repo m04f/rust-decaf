@@ -419,7 +419,7 @@ impl<'a> HIRExpr<'a> {
                     } else if op.is_arith() || op.is_relop() {
                         if lhs.ty() == Type::Int && rhs.ty() == Type::Int {
                             Ok(Self {
-                                extra: Type::Int,
+                                extra: if op.is_arith() { Type::Int } else { Type::Bool },
                                 inner: ast::ExprInner::BinOp {
                                     op,
                                     lhs: Box::new(lhs),
@@ -848,8 +848,7 @@ impl<'a> HIRStmt<'a> {
             } => {
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
                 let yes = HIRBlock::from_pblock(yes, in_loop, expected_return, vst, fst);
-                let no =
-                    no.map(|no| HIRBlock::from_pblock(no, in_loop, expected_return, vst, fst));
+                let no = no.map(|no| HIRBlock::from_pblock(no, in_loop, expected_return, vst, fst));
                 if cond.is_ok() && yes.is_ok() && no.is_none() {
                     if cond.as_ref().unwrap().ty() != Type::Bool {
                         Err(vec![Error::ExpectedBoolExpr(
