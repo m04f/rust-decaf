@@ -28,3 +28,6 @@ impl App for Semantics {
         }
     }
 }
+
+#[cfg(test)]
+mod test;
