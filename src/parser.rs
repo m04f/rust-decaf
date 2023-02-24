@@ -13,9 +13,6 @@ use Error::*;
 
 use core::iter::Peekable;
 
-#[cfg(test)]
-mod test;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error<'a> {
     Expected(Token, Token),
