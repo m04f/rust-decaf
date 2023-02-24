@@ -1,4 +1,6 @@
-use crate::ast::{self, Error as AstError, Op, RootChecker, StmtChecker, Type};
+use crate::ast::{
+    self, ELiteral, Error as AstError, IntLiteral, Op, RootChecker, StmtChecker, Type,
+};
 
 use crate::span::*;
 
@@ -1142,5 +1144,42 @@ impl<'a> FromIterator<PDocElem<'a>> for PRoot<'a> {
             };
             root
         })
+    }
+}
+
+use crate::ast::ExprInner;
+
+impl<'a, Arg> ExprInner<PELiteral<'a>, Arg, Span<'a>, ()> {
+    pub fn int_literal(self) -> Option<IntLiteral<Span<'a>>> {
+        match self {
+            ExprInner::Literal {
+                value: ELiteral::Decimal(lit),
+                ..
+            } => Some(IntLiteral::Decimal(lit)),
+            ExprInner::Literal {
+                value: ELiteral::Hex(lit),
+                ..
+            } => Some(IntLiteral::Hex(lit)),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> PExpr<'a> {
+    pub fn is_intliteral(&self) -> bool {
+        matches!(
+            self.inner,
+            ast::ExprInner::Literal {
+                value: ELiteral::Decimal(_) | ELiteral::Hex(_),
+                ..
+            }
+        )
+    }
+
+    pub fn literal(self) -> Option<PELiteral<'a>> {
+        match self.inner {
+            ExprInner::Literal { value, .. } => Some(value),
+            _ => None,
+        }
     }
 }

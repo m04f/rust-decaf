@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 use crate::span::*;
 
 mod checker;
@@ -420,6 +422,15 @@ impl<Lit, Arg, S> Expr<Lit, Arg, S, ()> {
 pub enum Type {
     Bool,
     Int,
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Bool => write!(f, "bool"),
+            Type::Int => write!(f, "int"),
+        }
+    }
 }
 
 impl Type {

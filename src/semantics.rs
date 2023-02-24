@@ -123,12 +123,13 @@ impl HIRLiteral {
         }
     }
 
-    fn from_pliteral(literal: ELiteral<Span<'_>>) -> Result<Self, Vec<Error<'_>>> {
+    fn from_pliteral(literal: ELiteral<Span<'_>>, is_neg: bool) -> Result<Self, Vec<Error<'_>>> {
+        let map_digit = if is_neg { |dig: i64| -dig } else { |dig| dig };
         match literal {
             ast::ELiteral::Decimal(num) => {
                 let parsed = num.bytes().try_fold(0, |acc: i64, digit| {
                     acc.checked_mul(10)
-                        .and_then(|acc| acc.checked_add((digit - b'0') as i64))
+                        .and_then(|acc| acc.checked_add(map_digit((digit - b'0') as i64)))
                 });
                 parsed
                     .ok_or(vec![Error::TooLargeInt(num)])
@@ -139,13 +140,13 @@ impl HIRLiteral {
                 .try_fold(0, |acc: i64, digit| match digit {
                     b'0'..=b'9' => acc
                         .checked_mul(16)
-                        .and_then(|acc| acc.checked_add((digit - b'0') as i64)),
+                        .and_then(|acc| acc.checked_add(map_digit((digit - b'0') as i64))),
                     b'a'..=b'f' => acc
                         .checked_mul(16)
-                        .and_then(|acc| acc.checked_add((digit - b'a' + 10) as i64)),
+                        .and_then(|acc| acc.checked_add(map_digit((digit - b'a' + 10) as i64))),
                     b'A'..=b'F' => acc
                         .checked_mul(16)
-                        .and_then(|acc| acc.checked_add((digit - b'A' + 10) as i64)),
+                        .and_then(|acc| acc.checked_add(map_digit((digit - b'A' + 10) as i64))),
                     _ => {
                         unreachable!()
                     }
@@ -303,6 +304,12 @@ impl<'a> HIRExpr<'a> {
                 } else {
                     Ok(Self::not(e, span))
                 }
+            }
+            Neg(span, e) if e.is_intliteral() => {
+                HIRLiteral::from_pliteral(e.literal().unwrap(), true).map(|value| Self {
+                    inner: Literal { span, value },
+                    extra: Type::Int,
+                })
             }
             Neg(span, e) => {
                 let e = Self::from_pexpr(*e, vst, fst)?;
@@ -475,7 +482,7 @@ impl<'a> HIRExpr<'a> {
                     Err(errors)
                 }
             }
-            Literal { span, value } => HIRLiteral::from_pliteral(value).map(|value| Self {
+            Literal { span, value } => HIRLiteral::from_pliteral(value, false).map(|value| Self {
                 inner: Literal { span, value },
                 extra: value.ty(),
             }),
@@ -735,7 +742,7 @@ fn construct_var_hashmap(
         Var::Array { size, .. } => {
             let size_span = *size.span();
             if let Ok(size) =
-                HIRLiteral::from_pliteral((*size).into()).map(|size| size.int().unwrap())
+                HIRLiteral::from_pliteral((*size).into(), false).map(|size| size.int().unwrap())
             {
                 if size == 0 {
                     Some(Error::ZeroArraySize(size_span))
