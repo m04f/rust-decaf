@@ -177,12 +177,7 @@ impl<'a> Debug for Span<'a> {
 
 impl ToString for Span<'_> {
     fn to_string(&self) -> String {
-        format!(
-            "{}:{}:{}",
-            self.line(),
-            self.column(),
-            std::str::from_utf8(self.source()).unwrap()
-        )
+        std::str::from_utf8(self.source()).unwrap().to_string()
     }
 }
 
