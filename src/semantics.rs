@@ -498,127 +498,128 @@ impl<'a> HIRExpr<'a> {
                 let cond = Self::from_pexpr(*cond, vst, fst);
                 let yes = Self::from_pexpr(*yes, vst, fst);
                 let no = Self::from_pexpr(*no, vst, fst);
-                if cond.is_ok() && yes.is_ok() && no.is_ok() {
-                    let cond = cond.unwrap();
-                    let yes = yes.unwrap();
-                    let no = no.unwrap();
-                    if cond.is_boolean() && yes.ty() == no.ty() {
-                        Ok(Self {
-                            extra: yes.ty(),
-                            inner: ast::ExprInner::Ter {
-                                cond: Box::new(cond),
-                                yes: Box::new(yes),
-                                no: Box::new(no),
-                                span,
-                            },
-                        })
-                    } else {
-                        let mut errors = vec![];
-                        (!cond.is_boolean())
-                            .then(|| errors.push(Error::ExpectedBoolExpr(*cond.span())));
-                        (yes.ty() != no.ty()).then(|| {
-                            errors.push(Error::TypeMismatch {
-                                rspan: *yes.span(),
-                                rhs: yes.ty(),
-                                lspan: *no.span(),
-                                lhs: no.ty(),
+                match (cond, yes, no) {
+                    (Ok(cond), Ok(yes), Ok(no)) => {
+                        if cond.is_boolean() && yes.ty() == no.ty() {
+                            Ok(Self {
+                                extra: yes.ty(),
+                                inner: ast::ExprInner::Ter {
+                                    cond: Box::new(cond),
+                                    yes: Box::new(yes),
+                                    no: Box::new(no),
+                                    span,
+                                },
                             })
-                        });
+                        } else {
+                            let mut errors = vec![];
+                            (!cond.is_boolean())
+                                .then(|| errors.push(Error::ExpectedBoolExpr(*cond.span())));
+                            (yes.ty() != no.ty()).then(|| {
+                                errors.push(Error::TypeMismatch {
+                                    rspan: *yes.span(),
+                                    rhs: yes.ty(),
+                                    lspan: *no.span(),
+                                    lhs: no.ty(),
+                                })
+                            });
+                            Err(errors)
+                        }
+                    }
+                    (cond, yes, no) => {
+                        let mut errors = vec![];
+                        if let Some(e) = cond.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = no.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = yes.err() {
+                            errors.extend(e)
+                        }
                         Err(errors)
                     }
-                } else {
-                    let mut errors = vec![];
-                    if let Some(e) = cond.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(e) = no.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(e) = yes.err() {
-                        errors.extend(e)
-                    }
-                    Err(errors)
                 }
             }
             BinOp { op, lhs, rhs, span } => {
                 let lhs = Self::from_pexpr(*lhs, vst, fst);
                 let rhs = Self::from_pexpr(*rhs, vst, fst);
-                if lhs.is_ok() && rhs.is_ok() {
-                    let lhs = lhs.unwrap();
-                    let rhs = rhs.unwrap();
-                    if op.is_eq() {
-                        if lhs.ty() == rhs.ty() {
-                            Ok(Self {
-                                extra: Type::Bool,
-                                inner: ast::ExprInner::BinOp {
-                                    op,
-                                    lhs: Box::new(lhs),
-                                    rhs: Box::new(rhs),
-                                    span,
-                                },
-                            })
+                match (lhs, rhs) {
+                    (Ok(lhs), Ok(rhs)) => {
+                        if op.is_eq() {
+                            if lhs.ty() == rhs.ty() {
+                                Ok(Self {
+                                    extra: Type::Bool,
+                                    inner: ast::ExprInner::BinOp {
+                                        op,
+                                        lhs: Box::new(lhs),
+                                        rhs: Box::new(rhs),
+                                        span,
+                                    },
+                                })
+                            } else {
+                                Err(vec![Error::TypeMismatch {
+                                    lspan: *lhs.span(),
+                                    lhs: lhs.ty(),
+                                    rspan: *rhs.span(),
+                                    rhs: rhs.ty(),
+                                }])
+                            }
+                        } else if op.is_arith() || op.is_relop() {
+                            if lhs.ty() == Type::Int && rhs.ty() == Type::Int {
+                                Ok(Self {
+                                    extra: if op.is_arith() { Type::Int } else { Type::Bool },
+                                    inner: ast::ExprInner::BinOp {
+                                        op,
+                                        lhs: Box::new(lhs),
+                                        rhs: Box::new(rhs),
+                                        span,
+                                    },
+                                })
+                            } else {
+                                let mut errors = vec![];
+                                if lhs.ty() != Type::Int {
+                                    errors.push(Error::ExpectedIntExpr(*lhs.span()))
+                                }
+                                if rhs.ty() != Type::Int {
+                                    errors.push(Error::ExpectedIntExpr(*rhs.span()))
+                                }
+                                Err(errors)
+                            }
+                        } else if op.is_cond() {
+                            if lhs.ty() == Type::Bool && rhs.ty() == Type::Bool {
+                                Ok(Self {
+                                    extra: Type::Bool,
+                                    inner: ast::ExprInner::BinOp {
+                                        op,
+                                        lhs: Box::new(lhs),
+                                        rhs: Box::new(rhs),
+                                        span,
+                                    },
+                                })
+                            } else {
+                                let mut errors = vec![];
+                                if lhs.ty() != Type::Bool {
+                                    errors.push(Error::ExpectedBoolExpr(*lhs.span()))
+                                }
+                                if rhs.ty() != Type::Bool {
+                                    errors.push(Error::ExpectedBoolExpr(*rhs.span()))
+                                }
+                                Err(errors)
+                            }
                         } else {
-                            Err(vec![Error::TypeMismatch {
-                                lspan: *lhs.span(),
-                                lhs: lhs.ty(),
-                                rspan: *rhs.span(),
-                                rhs: rhs.ty(),
-                            }])
+                            unreachable!()
                         }
-                    } else if op.is_arith() || op.is_relop() {
-                        if lhs.ty() == Type::Int && rhs.ty() == Type::Int {
-                            Ok(Self {
-                                extra: if op.is_arith() { Type::Int } else { Type::Bool },
-                                inner: ast::ExprInner::BinOp {
-                                    op,
-                                    lhs: Box::new(lhs),
-                                    rhs: Box::new(rhs),
-                                    span,
-                                },
-                            })
-                        } else {
-                            let mut errors = vec![];
-                            if lhs.ty() != Type::Int {
-                                errors.push(Error::ExpectedIntExpr(*lhs.span()))
-                            }
-                            if rhs.ty() != Type::Int {
-                                errors.push(Error::ExpectedIntExpr(*rhs.span()))
-                            }
-                            Err(errors)
+                    }
+                    (lhs, rhs) => {
+                        let mut errors = vec![];
+                        if let Some(e) = lhs.err() {
+                            errors.extend(e)
                         }
-                    } else if op.is_cond() {
-                        if lhs.ty() == Type::Bool && rhs.ty() == Type::Bool {
-                            Ok(Self {
-                                extra: Type::Bool,
-                                inner: ast::ExprInner::BinOp {
-                                    op,
-                                    lhs: Box::new(lhs),
-                                    rhs: Box::new(rhs),
-                                    span,
-                                },
-                            })
-                        } else {
-                            let mut errors = vec![];
-                            if lhs.ty() != Type::Bool {
-                                errors.push(Error::ExpectedBoolExpr(*lhs.span()))
-                            }
-                            if rhs.ty() != Type::Bool {
-                                errors.push(Error::ExpectedBoolExpr(*rhs.span()))
-                            }
-                            Err(errors)
+                        if let Some(e) = rhs.err() {
+                            errors.extend(e)
                         }
-                    } else {
-                        unreachable!()
+                        Err(errors)
                     }
-                } else {
-                    let mut errors = vec![];
-                    if let Some(e) = lhs.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(e) = rhs.err() {
-                        errors.extend(e)
-                    }
-                    Err(errors)
                 }
             }
             Literal { span, value } => HIRLiteral::from_pliteral(value, false).map(|value| Self {
@@ -990,74 +991,69 @@ impl<'a> HIRStmt<'a> {
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
                 let yes = HIRBlock::from_pblock(yes, in_loop, expected_return, vst, fst);
                 let no = no.map(|no| HIRBlock::from_pblock(no, in_loop, expected_return, vst, fst));
-                if cond.is_ok() && yes.is_ok() && no.is_none() {
-                    if cond.as_ref().unwrap().ty() != Type::Bool {
-                        Err(vec![Error::ExpectedBoolExpr(
-                            *cond.as_ref().unwrap().span(),
-                        )])
-                    } else {
-                        Ok(Self::If {
-                            cond: cond.unwrap(),
-                            yes: yes.unwrap(),
-                            no: None,
-                            span,
-                        })
-                    }
-                } else if cond.is_ok()
-                    && yes.is_ok()
-                    && no.is_some()
-                    && no.as_ref().unwrap().is_ok()
-                {
-                    if cond.as_ref().unwrap().ty() != Type::Bool {
-                        Err(vec![Error::ExpectedBoolExpr(
-                            *cond.as_ref().unwrap().span(),
-                        )])
-                    } else {
-                        Ok(Self::If {
-                            cond: cond.unwrap(),
-                            yes: yes.unwrap(),
-                            no: no.unwrap().ok(),
-                            span,
-                        })
-                    }
-                } else {
-                    let mut errors = vec![];
-                    if let Some(e) = cond.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(e) = yes.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(no) = no {
-                        if let Some(e) = no.err() {
-                            errors.extend(e)
+                match (cond, yes, no) {
+                    (Ok(cond), Ok(yes), None) => {
+                        if cond.ty() != Type::Bool {
+                            Err(vec![Error::ExpectedBoolExpr(*cond.span())])
+                        } else {
+                            Ok(Self::If {
+                                cond,
+                                yes,
+                                no: None,
+                                span,
+                            })
                         }
                     }
-                    Err(errors)
+                    (Ok(cond), Ok(yes), Some(Ok(no))) => {
+                        if cond.ty() != Type::Bool {
+                            Err(vec![Error::ExpectedBoolExpr(*cond.span())])
+                        } else {
+                            Ok(Self::If {
+                                cond,
+                                yes,
+                                no: Some(no),
+                                span,
+                            })
+                        }
+                    }
+                    (cond, yes, no) => {
+                        let mut errors = vec![];
+                        if let Some(e) = cond.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = yes.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(no) = no {
+                            if let Some(e) = no.err() {
+                                errors.extend(e)
+                            }
+                        }
+                        Err(errors)
+                    }
                 }
             }
             ast::Stmt::While { cond, body, span } => {
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
                 let body = HIRBlock::from_pblock(body, true, expected_return, vst, fst);
-                if cond.is_ok() && body.is_ok() {
-                    if cond.as_ref().unwrap().is_boolean() {
-                        Ok(Self::While {
-                            cond: cond.unwrap(),
-                            body: body.unwrap(),
-                            span,
-                        })
-                    } else {
-                        Err(vec![Error::ExpectedBoolExpr(*cond.unwrap().span())])
+                match (cond, body) {
+                    (Ok(cond), Ok(body)) => {
+                        if cond.is_boolean() {
+                            Ok(Self::While { cond, body, span })
+                        } else {
+                            Err(vec![Error::ExpectedBoolExpr(*cond.span())])
+                        }
                     }
-                } else {
-                    let mut errors = vec![];
-                    if let Some(e) = cond.err() {
-                        errors.extend(e)
+                    (cond, body) => {
+                        let mut errors = vec![];
+                        if let Some(e) = cond.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = body.err() {
+                            errors.extend(e)
+                        }
+                        Err(errors)
                     }
-                    if let Some(e) = body.err() {
-                        errors.extend(e)
-                    }
-                    Err(errors)
                 }
             }
             ast::Stmt::For {
@@ -1071,35 +1067,36 @@ impl<'a> HIRStmt<'a> {
                 let cond = HIRExpr::from_pexpr(cond, vst, fst);
                 let update = HIRAssign::from_passign(update, vst, fst);
                 let body = StmtBlock::from_pblock(body, true, expected_return, vst, fst);
-                if init.is_ok() && cond.is_ok() && update.is_ok() && body.is_ok() {
-                    if cond.as_ref().unwrap().is_boolean() {
-                        Ok(Self::For {
-                            init: init.unwrap(),
-                            cond: cond.unwrap(),
-                            update: update.unwrap(),
-                            body: body.unwrap(),
-                            span,
-                        })
-                    } else {
-                        Err(vec![Error::ExpectedBoolExpr(
-                            *cond.as_ref().unwrap().span(),
-                        )])
+                match (init, cond, update, body) {
+                    (Ok(init), Ok(cond), Ok(update), Ok(body)) => {
+                        if cond.is_boolean() {
+                            Ok(Self::For {
+                                init,
+                                cond,
+                                update,
+                                body,
+                                span,
+                            })
+                        } else {
+                            Err(vec![Error::ExpectedBoolExpr(*cond.span())])
+                        }
                     }
-                } else {
-                    let mut errors = vec![];
-                    if let Some(e) = init.err() {
-                        errors.extend(e)
+                    (init, cond, update, body) => {
+                        let mut errors = vec![];
+                        if let Some(e) = init.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = cond.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = update.err() {
+                            errors.extend(e)
+                        }
+                        if let Some(e) = body.err() {
+                            errors.extend(e)
+                        }
+                        Err(errors)
                     }
-                    if let Some(e) = cond.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(e) = update.err() {
-                        errors.extend(e)
-                    }
-                    if let Some(e) = body.err() {
-                        errors.extend(e)
-                    }
-                    Err(errors)
                 }
             }
         }
