@@ -1,21 +1,38 @@
+use std::fmt::Display;
+
 use crate::{error::CCError, span::*};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Error {
-    EmptyHexLiteral,
-    InvalidChar(u8),
-    InvalidEscape(u8),
-    UnexpectedChar(u8),
-    EmptyChar,
-    NonAsciiChars,
-    StringLiteral,
-    UnterminatedString,
-    UnterminatedComment,
-    UnterminatedChar,
+pub enum Error<'a> {
+    EmptyHexLiteral(Span<'a>),
+    InvalidChar(u8, Span<'a>),
+    InvalidEscape(u8, Span<'a>),
+    UnexpectedChar(u8, Span<'a>),
+    EmptyChar(Span<'a>),
+    NonAsciiChars(Span<'a>),
+    StringLiteral(Span<'a>),
+    UnterminatedString(Span<'a>),
+    UnterminatedComment(Span<'a>),
+    UnterminatedChar(Span<'a>),
 }
 
-impl Error {}
-
+impl<'a> Error<'a> {
+    fn position(self) -> (usize, usize) {
+        match self {
+            Error::EmptyHexLiteral(pos)
+            | Error::InvalidChar(_, pos)
+            | Error::InvalidEscape(_, pos)
+            | Error::UnexpectedChar(_, pos)
+            | Error::EmptyChar(pos)
+            | Error::NonAsciiChars(pos)
+            | Error::StringLiteral(pos)
+            | Error::UnterminatedString(pos)
+            | Error::UnterminatedComment(pos)
+            | Error::UnterminatedChar(pos) => pos,
+        }
+        .position()
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
     // keywords
@@ -79,16 +96,75 @@ pub enum Token {
     Eof,
 }
 
-pub type Result = std::result::Result<Token, Error>;
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Import => write!(f, "import"),
+            Token::If => write!(f, "if"),
+            Token::Else => write!(f, "else"),
+            Token::While => write!(f, "while"),
+            Token::For => write!(f, "for"),
+            Token::Break => write!(f, "break"),
+            Token::Continue => write!(f, "continue"),
+            Token::Return => write!(f, "return"),
+            Token::Int => write!(f, "int"),
+            Token::Bool => write!(f, "bool"),
+            Token::True => write!(f, "true"),
+            Token::False => write!(f, "false"),
+            Token::Void => write!(f, "void"),
+            Token::Len => write!(f, "len"),
+            Token::Plus => write!(f, "+"),
+            Token::Minus => write!(f, "-"),
+            Token::Star => write!(f, "*"),
+            Token::Slash => write!(f, "!"),
+            Token::Percent => write!(f, "%"),
+            Token::Less => write!(f, "<"),
+            Token::LessEqual => write!(f, "<="),
+            Token::Greater => write!(f, ">"),
+            Token::GreaterEqual => write!(f, ">="),
+            Token::EqualEqual => write!(f, "=="),
+            Token::NotEqual => write!(f, "!="),
+            Token::And => write!(f, "&&"),
+            Token::Or => write!(f, "||"),
+            Token::Not => write!(f, "!"),
+            Token::Question => write!(f, "?"),
+            Token::Colon => write!(f, ":"),
+            Token::Assign => write!(f, "="),
+            Token::AddAssign => write!(f, "+="),
+            Token::SubAssign => write!(f, "-="),
+            Token::Increment => write!(f, "++"),
+            Token::Decrement => write!(f, "--"),
+            Token::Semicolon => write!(f, ";"),
+            Token::Comma => write!(f, ","),
+            Token::LeftParen => write!(f, "("),
+            Token::RightParen => write!(f, ")"),
+            Token::SquareLeft => write!(f, "["),
+            Token::SquareRight => write!(f, "]"),
+            Token::CurlyLeft => write!(f, "{{"),
+            Token::CurlyRight => write!(f, "}}"),
+            Token::Identifier => write!(f, "identifier"),
+            Token::DecimalLiteral => write!(f, "decimal literal"),
+            Token::HexLiteral => write!(f, "hex literal"),
+            Token::StringLiteral => write!(f, "string literal"),
+            Token::CharLiteral(c) => write!(f, "char literal '{}'", *c as char),
+            Token::Space => write!(f, "space"),
+            Token::LineComment => write!(f, "line comment"),
+            Token::BlockComment => write!(f, "block comment"),
+            Token::Eof => write!(f, "end of file"),
+        }
+    }
+}
 
-fn get_string_errors(span: Span) -> impl Iterator<Item = Spanned<Error>> + '_ {
+pub type Result<'a> = std::result::Result<Token, Error<'a>>;
+
+fn get_string_errors<'a>(span: Span<'a>) -> impl Iterator<Item = Error<'a>> + 'a {
     let mut escape_next = true;
-    let mut error_checker = move |s: Span| {
+    let error_checker = move |s: Span<'a>| {
         let c = s[0];
         if escape_next {
             escape_next = false;
             if !is_escaped_char(c) {
-                Some(Error::InvalidEscape(c))
+                Some(Error::InvalidEscape(c, s.split_at(1).0))
             } else {
                 None
             }
@@ -96,19 +172,19 @@ fn get_string_errors(span: Span) -> impl Iterator<Item = Spanned<Error>> + '_ {
             escape_next = true;
             None
         } else if !is_dcf_char(c) {
-            Some(Error::InvalidChar(c))
+            Some(Error::InvalidChar(c, s.split_at(1).0))
         } else {
             None
         }
     };
     let terminated = if span.ends_with(b"\\\"") || !span.ends_with(b"\"") {
-        Some(span.into_spanned(Error::UnterminatedString))
+        Some(Error::UnterminatedString(span))
     } else {
         None
     };
     span.spans::<1>()
         .take(span.len() - 1)
-        .filter_map(move |s| error_checker(s).map(|e| s.into_spanned(e)))
+        .filter_map(error_checker)
         .chain(terminated)
 }
 
@@ -157,7 +233,7 @@ fn symbol(span: Span) -> Option<(Spanned<Result>, Span)> {
             b'?' => Some((ch.into_spanned(Ok(Token::Question)), rem)),
             b':' => Some((ch.into_spanned(Ok(Token::Colon)), rem)),
             c if !c.is_ascii_alphanumeric() => {
-                Some((ch.into_spanned(Err(Error::UnexpectedChar(c))), rem))
+                Some((ch.into_spanned(Err(Error::UnexpectedChar(c, ch))), rem))
             }
             _ => None,
         }
@@ -228,7 +304,7 @@ fn skip_block_comment(span: Span) -> Option<(Spanned<Result>, Span)> {
             Some((span.into_spanned(Ok(Token::BlockComment)), split))
         } else {
             Some((
-                span.into_spanned(Err(Error::UnterminatedComment)),
+                span.into_spanned(Err(Error::UnterminatedComment(span))),
                 span.split_at(span.len()).1,
             ))
         }
@@ -248,7 +324,7 @@ fn int_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
                 .unwrap_or(span.split_at(span.len() - 2));
             if lit.is_empty() {
                 let (err, rem) = span.split_at(2);
-                Some((err.into_spanned(Err(Error::EmptyHexLiteral)), rem))
+                Some((err.into_spanned(Err(Error::EmptyHexLiteral(err))), rem))
             } else {
                 let (lit, rem) = span.split_at(lit.len() + 2);
                 Some((lit.into_spanned(Ok(Token::HexLiteral)), rem))
@@ -272,7 +348,7 @@ fn escaped_char(span: Span) -> Spanned<Result> {
     assert!(span.len() == 4);
     assert!(span.starts_with(b"'\\"));
     if span[3] != b'\'' {
-        span.into_spanned(Err(Error::UnterminatedChar))
+        span.into_spanned(Err(Error::UnterminatedChar(span)))
     } else {
         let c = span[2];
         match c {
@@ -281,7 +357,7 @@ fn escaped_char(span: Span) -> Spanned<Result> {
             b'\\' => span.into_spanned(Ok(Token::CharLiteral(b'\\'))),
             b'\'' => span.into_spanned(Ok(Token::CharLiteral(b'\''))),
             b'"' => span.into_spanned(Ok(Token::CharLiteral(b'"'))),
-            c => span.into_spanned(Err(Error::InvalidEscape(c))),
+            c => span.into_spanned(Err(Error::InvalidEscape(c, span))),
         }
     }
 }
@@ -295,7 +371,7 @@ fn dcf_char(span: Span) -> Spanned<Result> {
     let c = span[1];
     match c {
         c if is_dcf_char(c) => span.into_spanned(Ok(Token::CharLiteral(c))),
-        _ => span.into_spanned(Err(Error::InvalidChar(c))),
+        _ => span.into_spanned(Err(Error::InvalidChar(c, span))),
     }
 }
 
@@ -307,7 +383,7 @@ fn char_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
         // escaped char
         if span.len() < 4 {
             Some((
-                span.into_spanned(Err(Error::UnterminatedChar)),
+                span.into_spanned(Err(Error::UnterminatedChar(span))),
                 span.split_at(span.len()).1,
             ))
         } else {
@@ -316,10 +392,10 @@ fn char_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
         }
     } else if span[1] == b'\'' {
         let (lit, rem) = span.split_at(2);
-        Some((lit.into_spanned(Err(Error::EmptyChar)), rem))
+        Some((lit.into_spanned(Err(Error::EmptyChar(span.split_at(2).0))), rem))
     } else if span[2] != b'\'' {
         let (lit, rem) = span.split_at(2);
-        Some((lit.into_spanned(Err(Error::UnterminatedChar)), rem))
+        Some((lit.into_spanned(Err(Error::UnterminatedChar(span.split_at(2).0))), rem))
     } else {
         let (lit, rem) = span.split_at(3);
         Some((dcf_char(lit), rem))
@@ -347,7 +423,7 @@ fn string_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
 
         // collect errors in the string literal
         if get_string_errors(lit).next().is_some() {
-            Some((lit.into_spanned(Err(Error::StringLiteral)), rem))
+            Some((lit.into_spanned(Err(Error::StringLiteral(lit))), rem))
         } else {
             Some((lit.into_spanned(Ok(Token::StringLiteral)), rem))
         }
@@ -368,7 +444,7 @@ fn non_ascii_graphic_chars(span: Span) -> Option<(Spanned<Result>, Span)> {
     if bad_chars.is_empty() {
         None
     } else {
-        Some((bad_chars.into_spanned(Err(Error::NonAsciiChars)), rem))
+        Some((bad_chars.into_spanned(Err(Error::NonAsciiChars(bad_chars))), rem))
     }
 }
 
@@ -412,8 +488,7 @@ pub fn tokens(mut text: Span) -> impl Iterator<Item = Spanned<Result>> {
     ))
 }
 
-fn single_error_msg(err: Spanned<Error>) -> String {
-    let string = |slice: &[u8]| String::from_utf8(slice.to_vec()).unwrap();
+fn single_error_msg(err: Error) -> String {
     fn print_u8(c: u8) -> String {
         if c.is_ascii_digit() {
             format!("{}", c as char)
@@ -421,34 +496,34 @@ fn single_error_msg(err: Spanned<Error>) -> String {
             format!("\\x{:02x}", c)
         }
     }
-    match err.get() {
-        Error::EmptyHexLiteral => {
-            format!("invalid hex literal: {}", string(err.fragment()))
+    match err {
+        Error::EmptyHexLiteral(span) => {
+            format!("invalid hex literal: {}", span.to_string())
         }
-        Error::EmptyChar => "empty char literal".to_string(),
-        Error::InvalidEscape(c) => {
-            format!("invalid escape sequence: \\{}", print_u8(*c))
+        Error::EmptyChar(_) => "empty char literal".to_string(),
+        Error::InvalidEscape(c, _) => {
+            format!("invalid escape sequence: \\{}", print_u8(c))
         }
-        Error::InvalidChar(c) => {
-            format!("invalid character literal: {}", print_u8(*c))
+        Error::InvalidChar(c, _) => {
+            format!("invalid character literal: {}", print_u8(c))
         }
-        Error::UnexpectedChar(c) => {
-            format!("unexpected character: {}", print_u8(*c))
+        Error::UnexpectedChar(c, _) => {
+            format!("unexpected character: {}", print_u8(c))
         }
-        Error::UnterminatedString => "unterminated string literal".to_string(),
-        Error::UnterminatedChar => "unterminated char literal".to_string(),
-        Error::UnterminatedComment => "unterminated block comment".to_string(),
-        Error::NonAsciiChars => {
-            format!("non-ascii characters: {}", string(err.fragment()))
+        Error::UnterminatedString(_) => "unterminated string literal".to_string(),
+        Error::UnterminatedChar(_) => "unterminated char literal".to_string(),
+        Error::UnterminatedComment(_) => "unterminated block comment".to_string(),
+        Error::NonAsciiChars(s) => {
+            format!("non-ascii characters: {}", s.to_string())
         }
         _ => unreachable!(),
     }
 }
 
-impl<'a> CCError for Spanned<'a, Error> {
+impl<'a> CCError for Error<'a> {
     fn msgs(self) -> Vec<(String, (usize, usize))> {
-        match self.get() {
-            Error::StringLiteral => get_string_errors(self.span())
+        match self {
+            Error::StringLiteral(str) => get_string_errors(str)
                 .map(|err| (single_error_msg(err), err.position()))
                 .collect(),
             _ => vec![(single_error_msg(self), self.position())],
@@ -518,14 +593,14 @@ mod test {
         let text = b"'\\'";
         span!(span, text);
         let (s1, s2) = char_literal(span).unwrap();
-        assert_eq!(s1.get().unwrap_err(), Error::UnterminatedChar);
+        assert!(matches!(s1.get().unwrap_err(), Error::UnterminatedChar(..)),);
         assert_eq!(s1.fragment(), b"'\\'");
         assert_eq!(s2.source(), b"");
 
         let text = b"'	'";
         span!(span, text);
         let (s1, s2) = char_literal(span).unwrap();
-        assert_eq!(s1.get().unwrap_err(), Error::InvalidChar(b'\t'));
+        assert!(matches!(s1.get().unwrap_err(), Error::InvalidChar(..)),);
         assert_eq!(s1.fragment(), b"'	'");
         assert_eq!(s2.source(), b"");
 
@@ -626,7 +701,7 @@ mod test {
         let text = "0xtttt";
         span!(span, text.as_bytes());
         let (s1, s2) = int_literal(span).unwrap();
-        assert_eq!(s1.get().unwrap_err(), Error::EmptyHexLiteral);
+        assert!(matches!(s1.get().unwrap_err(), Error::EmptyHexLiteral(..)));
         assert_eq!(s1.fragment(), b"0x");
         assert_eq!(s2.source(), b"tttt");
     }

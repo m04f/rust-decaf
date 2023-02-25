@@ -4,8 +4,6 @@ use crate::span::*;
 
 mod checker;
 
-pub use checker::Error;
-
 pub use self::checker::*;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

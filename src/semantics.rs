@@ -127,7 +127,7 @@ impl CCError for Error<'_> {
                     span.position(),
                 ),
                 (
-                    format!("correct main signature is `void main()`"),
+                    "correct main signature is `void main()`".to_string(),
                     span.position(),
                 ),
             ],
@@ -360,9 +360,9 @@ pub type HIRFunction<'a> = ast::Function<HIRBlock<'a>, VarSymMap<'a>, Span<'a>>;
 pub type HIRImport<'a> = ast::Import<Span<'a>>;
 
 pub struct HIRRoot<'a> {
-    globals: VarSymMap<'a>,
-    functions: FuncSymMap<'a>,
-    imports: ImportSymMap<'a>,
+    pub globals: VarSymMap<'a>,
+    pub functions: FuncSymMap<'a>,
+    pub imports: ImportSymMap<'a>,
 }
 
 impl<'a> HIRArg<'a> {
@@ -761,7 +761,7 @@ impl<'a> HIRCall<'a> {
 }
 
 impl<'a> HIRAssignExpr<'a> {
-    fn ty(&self) -> Type {
+    pub fn ty(&self) -> Type {
         use ast::AssignExpr::*;
         match self {
             Inc | Dec => Type::Int,

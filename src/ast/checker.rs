@@ -20,50 +20,24 @@ pub struct RootChecker<'a> {
     decls_next_pos: Option<Span<'a>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub enum Context {
-    If,
-    While,
-    For,
-    Block,
-    Root,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub enum Error<'a> {
-    MoveDeclTo { pos: Span<'a>, ctx: Context },
-    Illegal { pos: Span<'a>, ctx: Context },
-    WrapExpr { span: Span<'a>, ctx: Context },
-}
-
 impl StmtChecker {
     pub fn check<'a, F: FnMut(Error<'a>)>(stmt: &PStmt<'a>, mut callback: F) {
-        let check_nested_expr =
-            |e: &PExpr<'a>, ctx: Context, mut callback: F| {
-                if let ExprInner::Nested(..) = e.inner {
-                } else {
-                    callback(Error::WrapExpr {
-                        span: *e.span(),
-                        ctx,
-                    })
-                }
-            };
+        let mut check_nested_expr = |e: &PExpr<'a>| {
+            if let ExprInner::Nested(..) = e.inner {
+            } else {
+                callback(Error::WrapInParens(*e.span()))
+            }
+        };
         match stmt {
-            Stmt::If { cond, .. } => check_nested_expr(cond, Context::If, callback),
-            Stmt::While { cond, .. } => check_nested_expr(cond, Context::While, callback),
+            Stmt::If { cond, .. } => check_nested_expr(cond),
+            Stmt::While { cond, .. } => check_nested_expr(cond),
             Stmt::For { init, update, .. } => {
                 if let AssignExpr::Assign(..) = init.op {
                 } else {
-                    callback(Error::Illegal {
-                        pos: *init.span(),
-                        ctx: Context::For,
-                    })
+                    callback(Error::ForInitHasToBeAssign(*init.span()))
                 }
                 if let AssignExpr::Assign(..) = update.op {
-                    callback(Error::Illegal {
-                        pos: *update.span(),
-                        ctx: Context::For,
-                    })
+                    callback(Error::ForUpdateIsIncOrCompound(*update.span()))
                 } else {
                 }
             }
@@ -88,9 +62,9 @@ impl<'a> BlockChecker<'a> {
         match elem {
             BlockElem::Decl { .. } if self.decls_finished => {
                 assert!(self.decls_next_pos.is_some());
-                callback(Error::MoveDeclTo {
-                    pos: self.decls_next_pos.unwrap(),
-                    ctx: Context::Block,
+                callback(Error::DeclAfterFunc {
+                    decl_pos: elem.span(),
+                    hinted_pos: self.decls_next_pos.unwrap(),
                 })
             }
             BlockElem::Decl { .. } => {}
@@ -121,21 +95,29 @@ impl<'a> RootChecker<'a> {
         }
     }
 
-    pub fn check<F: FnMut(Error)>(&mut self, elem: &PDocElem<'a>, mut callback: F) {
+    pub fn check<F: FnMut(Error<'a>)>(&mut self, elem: &PDocElem<'a>, mut callback: F) {
         match elem {
-            DocElem::Import(..) if self.imports_finised => {
+            DocElem::Import(import) if self.imports_finised => {
                 assert!(self.imports_next_pos.is_some());
-                callback(Error::MoveDeclTo {
-                    pos: self.imports_next_pos.unwrap(),
-                    ctx: Context::Root,
-                })
+                let error = if self.decls_finished {
+                    Error::ImportAfterDecl {
+                        import_pos: *import.span(),
+                        hinted_pos: self.imports_next_pos.unwrap(),
+                    }
+                } else {
+                    Error::ImportAfterFunc {
+                        import_pos: *import.span(),
+                        hinted_pos: self.imports_next_pos.unwrap(),
+                    }
+                };
+                callback(error)
             }
             DocElem::Import(..) => {}
-            DocElem::Decl { .. } if self.decls_finished => {
+            DocElem::Decl(_, span) if self.decls_finished => {
                 assert!(self.decls_next_pos.is_some());
-                callback(Error::MoveDeclTo {
-                    pos: self.decls_next_pos.unwrap(),
-                    ctx: Context::Root,
+                callback(Error::DeclAfterFunc {
+                    decl_pos: *span,
+                    hinted_pos: self.decls_next_pos.unwrap(),
                 })
             }
             DocElem::Decl(..) => {

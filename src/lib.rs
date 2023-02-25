@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #![feature(if_let_guard)]
 
 pub mod ast;
