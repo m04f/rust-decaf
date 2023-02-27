@@ -1,5 +1,5 @@
 use super::App;
-use dcfrs::{error::*, lexer::*, semantics::*, span::*};
+use dcfrs::{error::*, lexer::*, hir::*, span::*};
 
 use std::fs::read_to_string;
 
