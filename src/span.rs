@@ -276,18 +276,20 @@ impl<'a> Span<'a> {
             .map(|ind| self.split_at(ind))
     }
 
-    /// merges two spans into one,
-    /// * Assumes that other comes after self.
-    /// * Assumes that both spans are in the same slice.
-    /// * no checks are performed to ensure that the above assumptions are true.
+    pub fn offset(&self) -> usize {
+        unsafe {
+            self.source()
+                .as_ptr()
+                .offset_from(self.span_source.source.as_ptr()) as usize
+        }
+    }
+
     pub fn merge(self, other: Self) -> Self {
         assert!(self.span_source == other.span_source);
-        let beg = self.source().as_ptr();
-        // split it at the end, we get a slice that is of length 0
-        let end = other.source().split_at(other.len()).1;
-        let slice = unsafe { slice::from_raw_parts(beg, end.as_ptr() as usize - beg as usize) };
+        let beg = self.offset();
+        let end = other.offset() + other.len();
         Self {
-            source: slice,
+            source: &self.span_source.source[beg..end],
             span_source: self.span_source,
         }
     }
