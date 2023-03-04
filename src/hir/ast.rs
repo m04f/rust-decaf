@@ -115,6 +115,18 @@ pub enum ArithOp {
     Mod,
 }
 
+impl From<ArithOp> for Op {
+    fn from(value: ArithOp) -> Self {
+        match value {
+            ArithOp::Add => Op::Add,
+            ArithOp::Sub => Op::Sub,
+            ArithOp::Mul => Op::Mul,
+            ArithOp::Div => Op::Div,
+            ArithOp::Mod => Op::Mod,
+        }
+    }
+}
+
 impl TryFrom<Op> for ArithOp {
     type Error = ();
     fn try_from(op: Op) -> Result<Self, Self::Error> {
@@ -137,6 +149,17 @@ pub enum RelOp {
     GreaterEqual,
 }
 
+impl From<RelOp> for Op {
+    fn from(value: RelOp) -> Self {
+        match value {
+            RelOp::Less => Op::Less,
+            RelOp::LessEqual => Op::LessEqual,
+            RelOp::Greater => Op::Greater,
+            RelOp::GreaterEqual => Op::GreaterEqual,
+        }
+    }
+}
+
 impl TryFrom<Op> for RelOp {
     type Error = ();
     fn try_from(op: Op) -> Result<Self, Self::Error> {
@@ -156,6 +179,14 @@ pub enum EqOp {
     NotEqual,
 }
 
+impl From<EqOp> for Op {
+    fn from(value: EqOp) -> Self {
+        match value {
+            EqOp::Equal => Op::Equal,
+            EqOp::NotEqual => Op::NotEqual,
+        }
+    }
+}
 impl TryFrom<Op> for EqOp {
     type Error = ();
     fn try_from(op: Op) -> Result<Self, Self::Error> {
@@ -171,6 +202,15 @@ impl TryFrom<Op> for EqOp {
 pub enum CondOp {
     And,
     Or,
+}
+
+impl From<CondOp> for Op {
+    fn from(value: CondOp) -> Self {
+        match value {
+            CondOp::And => Op::And,
+            CondOp::Or => Op::Or,
+        }
+    }
 }
 
 impl TryFrom<Op> for CondOp {
@@ -324,6 +364,12 @@ pub enum HIRStmt<'a> {
         update: HIRAssign<'a>,
         body: Box<HIRBlock<'a>>,
     },
+}
+
+impl<'a> From<HIRAssign<'a>> for HIRStmt<'a> {
+    fn from(value: HIRAssign<'a>) -> Self {
+        Self::Assign(value)
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -6,3 +6,5 @@ pub mod log;
 pub mod parser;
 pub mod hir;
 pub mod span;
+#[allow(dead_code)]
+pub mod ir;

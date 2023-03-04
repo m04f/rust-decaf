@@ -1,7 +1,8 @@
 use std::io::stderr;
 
-use crate::{lexer::Lexer, parser::Parser, semantics::Semantics};
+use crate::{lexer::Lexer, parser::Parser, semantics::Semantics, dumpcfg::DumpCFG};
 
+mod dumpcfg;
 mod lexer;
 mod parser;
 mod semantics;
@@ -26,6 +27,7 @@ enum Mode {
     Lexer,
     Parser,
     Semantics,
+    DumpCFG,
 }
 
 struct Config {
@@ -53,6 +55,8 @@ impl Config {
             "parse" => Some(Mode::Parser),
             "semantics" => Some(Mode::Semantics),
             "semantic" => Some(Mode::Semantics),
+            "dumpcfg" => Some(Mode::DumpCFG),
+            "cfg" => Some(Mode::DumpCFG),
             _ => None,
         }
     }
@@ -115,6 +119,12 @@ fn main() {
             &mut stderr,
             config.input_file.unwrap_or("/dev/stdin".to_string()),
         ),
+        Some(Mode::DumpCFG) => DumpCFG::run(
+            &mut output_stream,
+            &mut stderr,
+            config.input_file.unwrap_or("/dev/stdin".to_string()),
+        ),
+
         None => {
             println!("No mode specified");
             ExitStatus::Fail
