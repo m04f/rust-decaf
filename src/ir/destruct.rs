@@ -1,9 +1,18 @@
 use crate::{
     hir::*,
-    ir::{arena::*, cfg::*, instruction::*},
+    ir::{
+        basicblock::{
+            BasicBlock, BasicBlockBuilder as Builder, BasicBlockRef, IRFunction, RegAllocator,
+            Terminator,
+        },
+        cfg::*,
+        instruction::*,
+    },
 };
 
-#[derive(Debug, Clone, Copy)]
+use std::{cell::RefCell, rc::Rc};
+
+#[derive(Debug, Clone)]
 struct Escapes {
     r#return: BasicBlockRef,
     r#break: Option<BasicBlockRef>,
@@ -27,201 +36,142 @@ impl Escapes {
     }
 }
 
-impl SubCfg {
-    fn new_if((cond, cond_reg): (Self, Reg), yes: Self, no: Self, arena: &mut Arena) -> Self {
-        let join = arena.alloc_block();
-        let yes = yes.concat(join.into(), arena);
-        let no = no.concat(join.into(), arena);
-        arena
-            .get_block_mut(cond.end)
-            .set_fork(cond_reg, yes.beg, no.beg, arena);
-        SubCfg::new(cond.beg, join)
-    }
-    fn new_loop(
-        (cond, cond_reg): (Self, Reg),
-        body: HIRBlock<'_>,
-        arena: &mut Arena,
-        escapes: Escapes,
-    ) -> Self {
-        let loop_end = arena.alloc_block();
-        let body = body.destruct(arena, escapes.with_loop_escapes(loop_end, cond.beg));
-        arena
-            .get_block_mut(cond.end)
-            .set_fork(cond_reg, body.beg, loop_end, arena);
-        arena.get_block_mut(body.end).set_tail(cond.beg, arena);
-        Self::new(cond.beg, loop_end)
-    }
-}
-
 impl<'a> HIRExpr<'a> {
-    fn destruct(self, arena: &mut Arena) -> (SubCfg, Reg) {
+    fn destruct(self, reg_allocator: &mut RegAllocator) -> (Cfg, Reg) {
         use HIRExpr::*;
         use HIRLoc::*;
         match self {
             Len(length) => {
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                let instruction = Instruction::new_load_imm(reg, (length as i64).into());
-                arena.get_block_mut(block_ref).push(instruction);
-                (block_ref.into(), reg)
+                let reg = reg_allocator.alloc();
+                (
+                    Builder::new()
+                        .with_instructions([Instruction::new_load_imm(reg, (length as i64).into())])
+                        .build_cfg(),
+                    reg,
+                )
             }
             Neg(expr) => {
-                let (subcfg, expr_reg) = expr.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                arena
-                    .get_block_mut(block_ref)
-                    .push(Instruction::new_neg(reg, expr_reg));
-                (subcfg.concat(block_ref.into(), arena), reg)
+                let (expr_cfg, res_reg) = expr.destruct(reg_allocator);
+                let negated_reg = reg_allocator.alloc();
+                (
+                    expr_cfg.concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_neg(negated_reg, res_reg)])
+                            .build_cfg(),
+                    ),
+                    negated_reg,
+                )
             }
             Not(expr) => {
-                let (subcfg, expr_reg) = expr.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                arena
-                    .get_block_mut(block_ref)
-                    .push(Instruction::new_not(reg, expr_reg));
-                (subcfg.concat(block_ref.into(), arena), reg)
+                let (expr_cfg, res_reg) = expr.destruct(reg_allocator);
+                let negated_reg = reg_allocator.alloc();
+                (
+                    expr_cfg.concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_not(negated_reg, res_reg)])
+                            .build_cfg(),
+                    ),
+                    negated_reg,
+                )
             }
             Arith { op, lhs, rhs } => {
-                let (lhs_subcfg, lhs_reg) = lhs.destruct(arena);
-                let (rhs_subcfg, rhs_reg) = rhs.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                arena
-                    .get_block_mut(block_ref)
-                    .push(Instruction::new_arith(reg, lhs_reg, op, rhs_reg));
+                let (lhs_subcfg, lhs_reg) = lhs.destruct(reg_allocator);
+                let (rhs_subcfg, rhs_reg) = rhs.destruct(reg_allocator);
+                let reg = reg_allocator.alloc();
                 (
-                    lhs_subcfg
-                        .concat(rhs_subcfg, arena)
-                        .concat(block_ref.into(), arena),
+                    lhs_subcfg.concat(rhs_subcfg).concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_arith(reg, lhs_reg, op, rhs_reg)])
+                            .build_cfg(),
+                    ),
                     reg,
                 )
             }
             Eq { op, lhs, rhs } => {
-                let (lhs_subcfg, lhs_reg) = lhs.destruct(arena);
-                let (rhs_subcfg, rhs_reg) = rhs.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                arena
-                    .get_block_mut(block_ref)
-                    .push(Instruction::new_eq(reg, lhs_reg, op, rhs_reg));
+                let (lhs_subcfg, lhs_reg) = lhs.destruct(reg_allocator);
+                let (rhs_subcfg, rhs_reg) = rhs.destruct(reg_allocator);
+                let reg = reg_allocator.alloc();
                 (
-                    lhs_subcfg
-                        .concat(rhs_subcfg, arena)
-                        .concat(block_ref.into(), arena),
+                    lhs_subcfg.concat(rhs_subcfg).concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_eq(reg, lhs_reg, op, rhs_reg)])
+                            .build_cfg(),
+                    ),
                     reg,
                 )
             }
-            Cond { op, lhs, rhs } => {
-                let (lhs_subcfg, lhs_reg) = lhs.destruct(arena);
-                let (rhs_subcfg, rhs_reg) = rhs.destruct(arena);
-                let join = arena.alloc_block();
-                let result_reg = arena.alloc_reg();
-                let set_false = arena.alloc_block();
-                let set_false_instruction =
-                    Instruction::new_load_imm(result_reg, Immediate::Bool(false));
-                let set_true = arena.alloc_block();
-                let set_true_instruction =
-                    Instruction::new_load_imm(result_reg, Immediate::Bool(true));
-                arena.get_block_mut(set_false).push(set_false_instruction);
-                arena.get_block_mut(set_true).push(set_true_instruction);
-                arena.get_block_mut(set_true).set_tail(join, arena);
-                arena.get_block_mut(set_false).set_tail(join, arena);
-                match op {
-                    CondOp::Or => {
-                        arena
-                            .get_block_mut(rhs_subcfg.end)
-                            .set_fork(rhs_reg, set_true, set_false, arena);
-                        arena.get_block_mut(lhs_subcfg.end).set_fork(
-                            rhs_reg,
-                            set_true,
-                            rhs_subcfg.beg,
-                            arena,
-                        );
-                        (SubCfg::new(lhs_subcfg.beg, join), result_reg)
-                    }
-                    CondOp::And => {
-                        let neg_block = arena.alloc_block();
-                        let lhs_neg_reg = arena.alloc_reg();
-                        let neg_instruction = Instruction::new_not(lhs_neg_reg, lhs_reg);
-                        arena
-                            .get_block_mut(lhs_subcfg.end)
-                            .set_tail(neg_block, arena);
-                        arena.get_block_mut(neg_block).push(neg_instruction);
-                        arena
-                            .get_block_mut(rhs_subcfg.end)
-                            .set_fork(rhs_reg, set_true, set_false, arena);
-                        arena.get_block_mut(neg_block).set_fork(
-                            lhs_neg_reg,
-                            set_false,
-                            rhs_subcfg.beg,
-                            arena,
-                        );
-                        (SubCfg::new(lhs_subcfg.beg, join), result_reg)
-                    }
-                }
+            Cond { .. } => {
+                todo!()
             }
             Rel { op, lhs, rhs } => {
-                let (lhs_subcfg, lhs_reg) = lhs.destruct(arena);
-                let (rhs_subcfg, rhs_reg) = rhs.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                arena
-                    .get_block_mut(block_ref)
-                    .push(Instruction::new_rel(reg, lhs_reg, op, rhs_reg));
+                let (lhs_subcfg, lhs_reg) = lhs.destruct(reg_allocator);
+                let (rhs_subcfg, rhs_reg) = rhs.destruct(reg_allocator);
+                let res_reg = reg_allocator.alloc();
                 (
-                    lhs_subcfg
-                        .concat(rhs_subcfg, arena)
-                        .concat(block_ref.into(), arena),
-                    reg,
+                    lhs_subcfg.concat(rhs_subcfg).concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_rel(
+                                res_reg, lhs_reg, op, rhs_reg,
+                            )])
+                            .build_cfg(),
+                    ),
+                    res_reg,
                 )
             }
             Ter { cond, yes, no } => {
-                let (cond_subcfg, cond_reg) = cond.destruct(arena);
-                let (yes_subcfg, yes_reg) = yes.destruct(arena);
-                let (no_subcfg, no_reg) = no.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                let instruction = Instruction::new_select(reg, cond_reg, yes_reg, no_reg);
-                arena.get_block_mut(block_ref).push(instruction);
+                let (cond_subcfg, cond_reg) = cond.destruct(reg_allocator);
+                let (yes_subcfg, yes_reg) = yes.destruct(reg_allocator);
+                let (no_subcfg, no_reg) = no.destruct(reg_allocator);
+                let res_reg = reg_allocator.alloc();
                 (
-                    cond_subcfg
-                        .concat(yes_subcfg, arena)
-                        .concat(no_subcfg, arena)
-                        .concat(block_ref.into(), arena),
-                    reg,
+                    cond_subcfg.concat(yes_subcfg).concat(no_subcfg).concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_select(
+                                res_reg, cond_reg, yes_reg, no_reg,
+                            )])
+                            .build_cfg(),
+                    ),
+                    res_reg,
                 )
             }
             Literal(literal) => {
-                let block_ref = arena.alloc_block();
-                let reg = arena.alloc_reg();
-                let instruction = Instruction::new_load_imm(reg, literal.into());
-                arena.get_block_mut(block_ref).push(instruction);
-                (block_ref.into(), reg)
+                let reg = reg_allocator.alloc();
+                (
+                    Builder::new()
+                        .with_instructions([Instruction::new_load_imm(reg, literal.into())])
+                        .build_cfg(),
+                    reg,
+                )
             }
             Loc(loc) => match *loc {
                 Scalar(var) => {
-                    let block_ref = arena.alloc_block();
-                    let reg = arena.alloc_reg();
-                    let instruction = Instruction::new_load(reg, var.into_val());
-                    arena.get_block_mut(block_ref).push(instruction);
-                    (block_ref.into(), reg)
+                    let res_reg = reg_allocator.alloc();
+                    (
+                        Builder::new()
+                            .with_instructions([Instruction::new_load(res_reg, var.into_val())])
+                            .build_cfg(),
+                        res_reg,
+                    )
                 }
-                Index { arr, size, index } => {
-                    let (index_subcfg, index_reg) = index.destruct(arena);
-                    let block_ref = arena.alloc_block();
-                    let bound_check_instruction = Instruction::new_bound_check(index_reg, size);
-                    let reg = arena.alloc_reg();
-                    let load_instruction =
-                        Instruction::new_load_offset(reg, arr.into_val(), index_reg);
-                    arena.get_block_mut(block_ref).push(bound_check_instruction);
-                    arena.get_block_mut(block_ref).push(load_instruction);
-                    (index_subcfg.concat(block_ref.into(), arena), reg)
+                Index { arr, index, .. } => {
+                    let (index_subcfg, index_reg) = index.destruct(reg_allocator);
+                    let res_reg = reg_allocator.alloc();
+                    (
+                        index_subcfg.concat(
+                            Builder::new()
+                                .with_instructions([Instruction::new_load_offset(
+                                    res_reg,
+                                    arr.into_val(),
+                                    index_reg,
+                                )])
+                                .build_cfg(),
+                        ),
+                        res_reg,
+                    )
                 }
             },
             Call(call) => {
-                let (cfg, res) = call.destruct(arena);
+                let (cfg, res) = call.destruct(reg_allocator);
                 (cfg, res.unwrap())
             }
         }
@@ -229,120 +179,122 @@ impl<'a> HIRExpr<'a> {
 }
 
 impl<'a> HIRStmt<'a> {
-    fn destruct(self, arena: &mut Arena, escapes: Escapes) -> SubCfg {
+    fn destruct(self, reg_allocator: &mut RegAllocator, escapes: Escapes) -> Cfg {
         use HIRStmt::*;
         match self {
-            Expr(expr) => {
-                let (subcfg, _) = expr.destruct(arena);
-                subcfg
-            }
+            Expr(expr) => expr.destruct(reg_allocator).0,
             Break => escapes.r#break.unwrap().into(),
             Continue => escapes.r#continue.unwrap().into(),
             Return(expr) => expr.map_or_else(
                 || escapes.r#return.into(),
                 |expr| {
-                    let (subcfg, expr_reg) = expr.destruct(arena);
-                    let block_ref = arena.alloc_block();
-                    let instruction = Instruction::new_return(expr_reg);
-                    arena.get_block_mut(block_ref).push(instruction);
-                    subcfg.concat(block_ref.into(), arena)
+                    let (subcfg, expr_reg) = expr.destruct(reg_allocator);
+                    subcfg.concat(
+                        Builder::new()
+                            .with_instructions([Instruction::new_return(expr_reg)])
+                            .build_cfg(),
+                    )
                 },
             ),
-            Assign(assign) => assign.destruct(arena),
+            Assign(assign) => assign.destruct(reg_allocator),
             If { cond, yes, no } => {
-                let (cond_subcfg, cond_reg) = cond.destruct(arena);
-                let yes_subcfg = yes.destruct(arena, escapes);
-                let no_subcfg = no.destruct(arena, escapes);
-                SubCfg::new_if((cond_subcfg, cond_reg), yes_subcfg, no_subcfg, arena)
+                let (cond_subcfg, cond_reg) = cond.destruct(reg_allocator);
+                let join = Builder::new().build_cfg();
+                let yes_subcfg = yes
+                    .destruct(reg_allocator, escapes.clone())
+                    .concat(join.clone());
+                let no_subcfg = no.destruct(reg_allocator, escapes).concat(join);
+                cond_subcfg.concat(
+                    Builder::new()
+                        .with_fork(cond_reg, yes_subcfg.beg, no_subcfg.beg)
+                        .build_cfg(),
+                )
             }
-            While { cond, body } => {
-                let (cond_subcfg, cond_reg) = cond.destruct(arena);
-                SubCfg::new_loop((cond_subcfg, cond_reg), *body, arena, escapes)
-            }
-            For {
-                init,
-                cond,
-                update,
-                mut body,
-            } => {
-                let init_subcfg = init.destruct(arena);
-                body.stmts.push(update.into());
-                let (cond_subcfg, cond_reg) = cond.destruct(arena);
-                let r#loop = SubCfg::new_loop((cond_subcfg, cond_reg), *body, arena, escapes);
-                init_subcfg.concat(r#loop, arena)
-            }
+            While { .. } => todo!(),
+            For { .. } => todo!(),
         }
     }
 }
 
 impl<'a> HIRBlock<'a> {
-    fn destruct(self, arena: &mut Arena, escapes: Escapes) -> SubCfg {
-        let decls_block = arena.alloc_block();
-        arena
-            .get_block_mut(decls_block)
-            .extend(self.decls.into_keys().map(Instruction::new_stack_alloc));
-        let mut block_subcfg = SubCfg::from(decls_block);
-        for stmt in self.stmts {
-            let stmt_subcfg = stmt.destruct(arena, escapes);
-            block_subcfg = block_subcfg.concat(stmt_subcfg, arena);
-        }
-        block_subcfg
+    fn destruct(self, reg_allocator: &mut RegAllocator, escapes: Escapes) -> Cfg {
+        let decls = Builder::new()
+            .with_instructions(self.decls.into_keys().map(Instruction::new_stack_alloc))
+            .build_cfg();
+        self.stmts
+            .into_iter()
+            .map(|stmt| stmt.destruct(reg_allocator, escapes.clone()))
+            .fold(decls, |cfg, tail| cfg.concat(tail))
     }
 }
 
 impl<'a> HIRAssign<'a> {
-    fn destruct(self, arena: &mut Arena) -> SubCfg {
+    fn destruct(self, reg_allocator: &mut RegAllocator) -> Cfg {
         use HIRLoc::*;
         let HIRAssign { lhs, rhs } = self;
-        let (rhs_subcfg, rhs_reg) = rhs.destruct(arena);
+        let (rhs_subcfg, rhs_reg) = rhs.destruct(reg_allocator);
         match lhs {
             Scalar(var) => {
-                let block_ref = arena.alloc_block();
-                let store_instruction = Instruction::new_store(var.into_val(), rhs_reg);
-                arena.get_block_mut(block_ref).push(store_instruction);
-                rhs_subcfg.concat(block_ref.into(), arena)
+                let rhs_reg = reg_allocator.alloc();
+                rhs_subcfg.concat(
+                    Builder::new()
+                        .with_instructions([Instruction::new_store(var.into_val(), rhs_reg)])
+                        .build_cfg(),
+                )
             }
-            Index { arr, size, index } => {
-                let (index_subcfg, index_reg) = index.destruct(arena);
-                let block_ref = arena.alloc_block();
-                let bound_check_instruction = Instruction::new_bound_check(index_reg, size);
-                let store_instruction =
-                    Instruction::new_store_offset(arr.into_val(), index_reg, rhs_reg);
-                arena.get_block_mut(block_ref).push(bound_check_instruction);
-                arena.get_block_mut(block_ref).push(store_instruction);
-                rhs_subcfg
-                    .concat(index_subcfg, arena)
-                    .concat(block_ref.into(), arena)
+            Index { arr, index, .. } => {
+                let (index_subcfg, index_reg) = index.destruct(reg_allocator);
+                rhs_subcfg.concat(index_subcfg).concat(
+                    Builder::new()
+                        .with_instructions([Instruction::new_store_offset(
+                            arr.into_val(),
+                            index_reg,
+                            rhs_reg,
+                        )])
+                        .build_cfg(),
+                )
             }
         }
     }
 }
 
 impl<'a> HIRCall<'a> {
-    fn destruct(self, arena: &mut Arena) -> (SubCfg, Option<Reg>) {
+    fn destruct(self, reg_allocator: &mut RegAllocator) -> (Cfg, Option<Reg>) {
         use HIRCall::*;
         match self {
             Extern { .. } => todo!(),
             Decaf { name, ret, args } => {
-                let beg = arena.alloc_block();
-                let mut args_cfg = SubCfg::from(beg);
-                let mut args_regs: Vec<Reg> = vec![];
-                for arg in args {
-                    let (arg_cfg, arg_reg) = arg.destruct(arena);
-                    args_cfg = args_cfg.concat(arg_cfg, arena);
-                    args_regs.push(arg_reg);
-                }
+                let (args_cfg, args) = args
+                    .into_iter()
+                    .map(|arg| arg.destruct(reg_allocator))
+                    .fold(
+                        (Builder::new().build_cfg(), vec![]),
+                        |(cfg, mut args_regs), (tail_cfg, new_arg)| {
+                            (cfg.concat(tail_cfg), {
+                                args_regs.push(new_arg);
+                                args_regs
+                            })
+                        },
+                    );
                 if ret.is_some() {
-                    let block_ref = arena.alloc_block();
-                    let reg = arena.alloc_reg();
-                    let instruction = Instruction::new_ret_call(reg, name, args_regs);
-                    arena.get_block_mut(block_ref).push(instruction);
-                    (args_cfg.concat(block_ref.into(), arena), Some(reg))
+                    let ret_reg = reg_allocator.alloc();
+                    (
+                        args_cfg.concat(
+                            Builder::new()
+                                .with_instructions([Instruction::new_ret_call(ret_reg, name, args)])
+                                .build_cfg(),
+                        ),
+                        Some(ret_reg),
+                    )
                 } else {
-                    let block_ref = arena.alloc_block();
-                    let instruction = Instruction::new_void_call(name, args_regs);
-                    arena.get_block_mut(block_ref).push(instruction);
-                    (block_ref.into(), None)
+                    (
+                        args_cfg.concat(
+                            Builder::new()
+                                .with_instructions([Instruction::new_void_call(name, args)])
+                                .build_cfg(),
+                        ),
+                        None,
+                    )
                 }
             }
         }
@@ -350,28 +302,36 @@ impl<'a> HIRCall<'a> {
 }
 
 impl<'a> HIRFunction<'a> {
-    pub fn destruct(self) -> Cfg {
-        let mut arena = Arena::new();
-        if self.ret.is_some() {
-            let return_escape = arena.alloc_block();
-            let instruction = Instruction::ReturnGuard;
-            arena.get_block_mut(return_escape).push(instruction);
-            let SubCfg { beg, end } = self.body.destruct(&mut arena, Escapes::new(return_escape));
-            Cfg {
-                beg,
-                end,
-                arena,
-                name: self.name.to_string(),
-            }
+    pub fn destruct(self) -> IRFunction {
+        let mut reg_allocator = RegAllocator::new();
+        let Cfg { beg: root, end } = if self.ret.is_some() {
+            let return_escape = Builder::new()
+                .with_instructions([Instruction::ReturnGuard])
+                .build_refcount();
+            self.body
+                .destruct(&mut reg_allocator, Escapes::new(return_escape))
         } else {
-            let return_escape = arena.alloc_block();
-            let SubCfg { beg, end } = self.body.destruct(&mut arena, Escapes::new(return_escape));
-            Cfg {
-                beg,
-                end,
-                arena,
-                name: self.name.to_string(),
-            }
-        }
+            self.body.destruct(
+                &mut reg_allocator,
+                Escapes::new(Builder::new().build_refcount()),
+            )
+        };
+        drop(end);
+        let func = IRFunction::new(root);
+        func.root().dfs().for_each(|node: Rc<RefCell<BasicBlock>>| {
+            let temp_borrow = node.borrow();
+            if let Some((new_terminator, new_instructions)) = match temp_borrow.terminator() {
+                Some(Terminator::Tail { block }) if Rc::strong_count(block) == 1 => {
+                    let mut block_mut = block.borrow_mut();
+                    Some((block_mut.take_terminator(), block_mut.take_instructions()))
+                }
+                _ => None,
+            } {
+                drop(temp_borrow);
+                node.borrow_mut().extend_instructions(new_instructions);
+                *node.borrow_mut().terminator_mut() = new_terminator;
+            };
+        });
+        func
     }
 }

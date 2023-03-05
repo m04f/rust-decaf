@@ -120,7 +120,6 @@ impl From<Reg> for Dest {
 pub enum Unary {
     Not,
     Neg,
-    Nop,
 }
 
 #[rustfmt::skip]
@@ -128,6 +127,8 @@ pub enum Unary {
 pub enum Instruction {
     Op { dest: Dest, source1: Source, source2: Source, op: Op },
     Unary { dest: Dest, source: Source, op: Unary },
+    Load { dest: Dest, source: Source },
+    Store { dest: Dest, source: Source },
     Select { dest: Dest, cond: Source, yes: Source, no: Source },
     BoundGuard { value: Source, bound: u64 },
     ReturnGuard,
@@ -146,6 +147,8 @@ impl Debug for Instruction {
                 source2,
                 op,
             } => write!(f, "{dest} = {op:?} {source1} {source2}"),
+            Self::Load { dest, source } => write!(f, "{dest} = load {source}"),
+            Self::Store { dest, source } => write!(f, "store {dest} {source}"),
             Self::Unary { dest, source, op } => write!(f, "{dest} = {op:?} {source}"),
             Self::Select {
                 dest,
@@ -165,17 +168,21 @@ impl Debug for Instruction {
 
 impl Instruction {
     pub fn new_load(reg: Reg, symbol: impl Into<Symbol>) -> Self {
-        Self::Unary {
+        Self::Load {
             dest: reg.into(),
             source: symbol.into().into(),
-            op: Unary::Nop,
         }
     }
     pub fn new_load_imm(reg: Reg, immediate: Immediate) -> Self {
-        Self::Unary {
+        Self::Load {
             dest: reg.into(),
             source: immediate.into(),
-            op: Unary::Nop,
+        }
+    }
+    pub fn new_load_offset(reg: Reg, symbol: impl Into<Symbol>, offset: Reg) -> Self {
+        Self::Load {
+            dest: reg.into(),
+            source: Source::Offset(symbol.into(), offset),
         }
     }
     pub fn new_bound_check(reg: Reg, bound: u64) -> Self {
@@ -184,25 +191,16 @@ impl Instruction {
             bound,
         }
     }
-    pub fn new_load_offset(reg: Reg, symbol: impl Into<Symbol>, offset: Reg) -> Self {
-        Self::Unary {
-            dest: reg.into(),
-            source: Source::Offset(symbol.into(), offset),
-            op: Unary::Nop,
-        }
-    }
     pub fn new_store(symbol: impl Into<Symbol>, source: Reg) -> Self {
-        Self::Unary {
+        Self::Store {
             dest: Dest::Symbol(symbol.into()),
             source: source.into(),
-            op: Unary::Nop,
         }
     }
     pub fn new_store_offset(symbol: impl Into<Symbol>, offset: Reg, source: Reg) -> Self {
-        Self::Unary {
+        Self::Store {
             dest: Dest::Offset(symbol.into(), offset),
             source: source.into(),
-            op: Unary::Nop,
         }
     }
     pub fn new_return(reg: Reg) -> Self {
