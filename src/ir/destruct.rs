@@ -199,16 +199,17 @@ impl<'a> HIRStmt<'a> {
             Assign(assign) => assign.destruct(reg_allocator),
             If { cond, yes, no } => {
                 let (cond_subcfg, cond_reg) = cond.destruct(reg_allocator);
-                let join = Builder::new().build_cfg();
+                let join = Builder::new().build_refcount();
                 let yes_subcfg = yes
                     .destruct(reg_allocator, escapes.clone())
                     .concat(join.clone());
-                let no_subcfg = no.destruct(reg_allocator, escapes).concat(join);
-                cond_subcfg.concat(
-                    Builder::new()
-                        .with_fork(cond_reg, yes_subcfg.beg, no_subcfg.beg)
-                        .build_cfg(),
-                )
+                let no_subcfg = no.destruct(reg_allocator, escapes).concat(join.clone());
+
+                let if_start = Builder::new()
+                    .with_fork(cond_reg, yes_subcfg.beg, no_subcfg.beg)
+                    .build_refcount();
+                let if_cfg = Cfg::new(if_start, join);
+                cond_subcfg.concat(if_cfg)
             }
             While { .. } => todo!(),
             For { .. } => todo!(),
@@ -317,7 +318,7 @@ impl<'a> HIRFunction<'a> {
             )
         };
         drop(end);
-        let func = IRFunction::new(root);
+        let func = IRFunction::new(root, self.name.to_string());
         func.root().dfs().for_each(|node: Rc<RefCell<BasicBlock>>| {
             let temp_borrow = node.borrow();
             if let Some((new_terminator, new_instructions)) = match temp_borrow.terminator() {
