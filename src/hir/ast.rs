@@ -29,6 +29,12 @@ impl<T> Typed<T> {
     pub fn r#type(&self) -> Type {
         self.r#type
     }
+    pub fn is_int(&self) -> bool {
+        matches!(self.r#type, Type::Int)
+    }
+    pub fn is_bool(&self) -> bool {
+        matches!(self.r#type, Type::Bool)
+    }
     pub fn val(&self) -> &T {
         &self.val
     }
@@ -377,6 +383,8 @@ pub struct HIRFunction<'a> {
     pub name: Span<'a>,
     pub body: HIRBlock<'a>,
     pub args: VarSymMap<'a>,
+    // redundent but easy...
+    pub args_sorted: Vec<Span<'a>>,
     pub ret: Option<Type>,
 }
 
@@ -385,12 +393,14 @@ impl<'a> HIRFunction<'a> {
         name: PIdentifier<'a>,
         body: HIRBlock<'a>,
         args: VarSymMap<'a>,
+        args_sorted: Vec<Span<'a>>,
         ret: Option<Type>,
     ) -> Self {
         Self {
             name: name.span(),
             body,
             args,
+            args_sorted,
             ret,
         }
     }

@@ -1,11 +1,10 @@
 use super::App;
-use dcfrs::{error::*, hir::*, lexer::*, span::*};
+use dcfrs::{error::*, hir::*, ir::Function, lexer::*, span::*};
 
 use std::{
     fs::{self, read_to_string},
-    io::Write,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
 };
 
 pub struct DumpCFG;
@@ -26,28 +25,16 @@ impl App for DumpCFG {
         let hirtree = HIRRoot::from_proot(proot);
         match hirtree {
             Ok(tree) => {
-                let out_dir = PathBuf::from("/tmp/decafcc/cfg-dump");
+                let out_dir = PathBuf::from("/tmp/decafcc/cfg-dump").join(input_file);
                 fs::create_dir_all(&out_dir).unwrap();
-                let output_files = tree
-                    .functions
-                    .into_values()
-                    .map(|func| {
-                        let out_file = out_dir.join(func.name.to_string()).with_extension("png");
-                        let dot = func.destruct().to_dot();
-                        let mut dot_proc = Command::new("dot")
-                            .arg("-Tpng")
-                            .arg("-o")
-                            .arg(&out_file)
-                            .stdin(Stdio::piped())
-                            .spawn()
-                            .unwrap();
-                        dot_proc
-                            .stdin
-                            .as_ref()
-                            .unwrap()
-                            .write_all(dot.as_bytes())
-                            .unwrap();
-                        dot_proc.wait().unwrap();
+                let out_file =
+                    |function: &Function| out_dir.join(function.name()).with_extension("svg");
+                let output_files = tree.destruct()
+                    .functions()
+                    .iter()
+                    .map(|function| {
+                        let out_file = out_file(function);
+                        function.to_dot().compile(&out_file).unwrap();
                         out_file
                     })
                     .collect::<Vec<_>>();

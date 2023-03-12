@@ -633,6 +633,7 @@ impl<'a> HIRFunction<'a> {
         vst: VSymMap<'a, '_>,
         fst: FSymMap<'a, '_>,
     ) -> Result<Self, Vec<Error<'a>>> {
+        let args_sorted = func.args.iter().map(|arg| arg.name()).collect();
         let args = construct_var_hashmap(func.args)?;
         let body = HIRBlock::from_pblock(
             func.body,
@@ -643,7 +644,7 @@ impl<'a> HIRFunction<'a> {
         )?;
         let redefs = intersect(body.decls().keys().copied(), &args);
         if redefs.is_empty() {
-            Ok(Self::new(func.name, body, args, func.ret))
+            Ok(Self::new(func.name, body, args, args_sorted, func.ret))
         } else {
             Err(redefs)
         }

@@ -6,5 +6,10 @@ pub mod log;
 pub mod parser;
 pub mod hir;
 pub mod span;
-#[allow(dead_code)]
 pub mod ir;
+
+/// a module that comtains any optimizations made to the ir. (currently...)
+pub mod optimizations;
+
+// /// codegen module (for x86_64 only).
+// pub mod codegen;

@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display};
 
 use crate::{hir::*, parser, span::*};
 
-type Op = parser::ast::Op;
+pub type Op = parser::ast::Op;
 
 pub type Symbol = String;
 
@@ -125,7 +125,7 @@ pub enum Unary {
 #[rustfmt::skip]
 #[derive(Clone)]
 pub enum Instruction {
-    Op { dest: Dest, source1: Source, source2: Source, op: Op },
+    Op2 { dest: Dest, source1: Source, source2: Source, op: Op },
     Unary { dest: Dest, source: Source, op: Unary },
     Load { dest: Dest, source: Source },
     Store { dest: Dest, source: Source },
@@ -136,12 +136,13 @@ pub enum Instruction {
     VoidCall { symbol: Symbol, args: Vec<Reg> },
     Call { dest: Dest, symbol: Symbol, args: Vec<Reg> },
     Return { value: Source },
+    VoidReturn,
 }
 
 impl Debug for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Op {
+            Self::Op2 {
                 dest,
                 source1,
                 source2,
@@ -157,11 +158,12 @@ impl Debug for Instruction {
                 no,
             } => write!(f, "{} = select {} {} {}", dest, cond, yes, no),
             Self::BoundGuard { value, bound } => write!(f, "bound_guard {} {}", value, bound),
-            Self::ReturnGuard => write!(f, "return_guard"),
+            Self::ReturnGuard => write!(f, "return guard"),
             Self::StackAlloc { symbol } => write!(f, "stack_alloc {}", symbol),
-            Self::VoidCall { symbol, args } => write!(f, "void_call {} {:?}", symbol, args),
+            Self::VoidCall { symbol, args } => write!(f, "void call {} {:?}", symbol, args),
             Self::Call { dest, symbol, args } => write!(f, "{} = call {} {:?}", dest, symbol, args),
             Self::Return { value } => write!(f, "return {}", value),
+            Self::VoidReturn => write!(f, "ret"),
         }
     }
 }
@@ -173,13 +175,13 @@ impl Instruction {
             source: symbol.into().into(),
         }
     }
-    pub fn new_load_imm(reg: Reg, immediate: Immediate) -> Self {
+    pub fn new_load_imm(reg: Reg, immediate: impl Into<Immediate>) -> Self {
         Self::Load {
             dest: reg.into(),
-            source: immediate.into(),
+            source: immediate.into().into(),
         }
     }
-    pub fn new_load_offset(reg: Reg, symbol: impl Into<Symbol>, offset: Reg) -> Self {
+    pub fn new_load_offset(reg: Reg, symbol: impl Into<Symbol>, offset: Reg, _bound: u64) -> Self {
         Self::Load {
             dest: reg.into(),
             source: Source::Offset(symbol.into(), offset),
@@ -197,7 +199,7 @@ impl Instruction {
             source: source.into(),
         }
     }
-    pub fn new_store_offset(symbol: impl Into<Symbol>, offset: Reg, source: Reg) -> Self {
+    pub fn new_store_offset(symbol: impl Into<Symbol>, offset: Reg, source: Reg, _bound: u64) -> Self {
         Self::Store {
             dest: Dest::Offset(symbol.into(), offset),
             source: source.into(),
@@ -225,6 +227,9 @@ impl Instruction {
             args,
         }
     }
+    pub fn new_void_ret() -> Self {
+        Self::VoidReturn
+    }
     pub fn new_ret_call(reg: Reg, symbol: impl Into<Symbol>, args: Vec<Reg>) -> Self {
         Self::Call {
             dest: reg.into(),
@@ -247,7 +252,7 @@ impl Instruction {
         }
     }
     pub fn new_arith(dest: Reg, lhs: Reg, op: ArithOp, rhs: Reg) -> Self {
-        Self::Op {
+        Self::Op2 {
             dest: dest.into(),
             source1: lhs.into(),
             source2: rhs.into(),
@@ -255,7 +260,7 @@ impl Instruction {
         }
     }
     pub fn new_eq(dest: Reg, lhs: Reg, op: EqOp, rhs: Reg) -> Self {
-        Self::Op {
+        Self::Op2 {
             dest: dest.into(),
             source1: lhs.into(),
             source2: rhs.into(),
@@ -263,7 +268,7 @@ impl Instruction {
         }
     }
     pub fn new_cond(dest: Reg, lhs: Reg, op: CondOp, rhs: Reg) -> Self {
-        Self::Op {
+        Self::Op2 {
             dest: dest.into(),
             source1: lhs.into(),
             source2: rhs.into(),
@@ -271,7 +276,7 @@ impl Instruction {
         }
     }
     pub fn new_rel(dest: Reg, lhs: Reg, op: RelOp, rhs: Reg) -> Self {
-        Self::Op {
+        Self::Op2 {
             dest: dest.into(),
             source1: lhs.into(),
             source2: rhs.into(),
@@ -280,7 +285,7 @@ impl Instruction {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Reg(usize);
 
 impl Display for Reg {
