@@ -50,7 +50,13 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "dcfrs"
 version = "0.1.0"
+
+[[package]]
+name = "dcfrs-tests"
+version = "0.1.0"
 dependencies = [
+ "cc",
+ "dcfrs",
  "proptest",
  "seq-macro",
 ]
@@ -276,9 +282,9 @@ dependencies = [
 
 [[package]]
 name = "seq-macro"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1685deded9b272198423bdbdb907d8519def2f26cf3699040e54e8c4fbd5c5ce"
+checksum = "e6b44e8fc93a14e66336d230954dda83d18b4605ccace8fe09bc7514a71ad0bc"
 
 [[package]]
 name = "tempfile"

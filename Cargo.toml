@@ -9,4 +9,5 @@ edition = "2021"
 name = "decafcc"
 
 [dev-dependencies]
+proptest = "1.1.0"
 seq-macro = "0.3.2"

@@ -39,6 +39,30 @@ pub enum Source {
     Reg(Reg),
 }
 
+impl From<bool> for Source {
+    fn from(value: bool) -> Self {
+        Self::Immediate(Immediate::Bool(value))
+    }
+}
+
+impl Source {
+    pub fn to_dist(&self) -> Option<Dest> {
+        match self {
+            Self::Reg(reg) => Some(Dest::Reg(*reg)),
+            Self::Symbol(s) => Some(Dest::Symbol(s.clone())),
+            Self::Offset(s, r) => Some(Dest::Offset(s.clone(), *r)),
+            Self::Immediate(_) => None,
+        }
+    }
+
+    pub fn immediate(&self) -> Option<Immediate> {
+        match self {
+            Self::Immediate(i) => Some(*i),
+            _ => None,
+        }
+    }
+}
+
 impl Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -116,25 +140,40 @@ impl From<Reg> for Dest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Unary {
     Not,
     Neg,
 }
 
+#[derive(Clone)]
+pub enum IRExternArg {
+    Source(Source),
+    String(String),
+}
+impl Debug for IRExternArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Source(s) => write!(f, "{s}"),
+            Self::String(_) => write!(f, "const string"),
+        }
+    }
+}
+
 #[rustfmt::skip]
 #[derive(Clone)]
 pub enum Instruction {
+    AllocArray { name: String, size: u64 },
+    AllocScalar { name: String },
     Op2 { dest: Dest, source1: Source, source2: Source, op: Op },
     Unary { dest: Dest, source: Source, op: Unary },
     Load { dest: Dest, source: Source },
     Store { dest: Dest, source: Source },
     Select { dest: Dest, cond: Source, yes: Source, no: Source },
-    BoundGuard { value: Source, bound: u64 },
     ReturnGuard,
-    StackAlloc { symbol: Symbol },
     VoidCall { symbol: Symbol, args: Vec<Reg> },
     Call { dest: Dest, symbol: Symbol, args: Vec<Reg> },
+    ExternCall { dest: Dest, symbol: Symbol, args: Vec<IRExternArg> },
     Return { value: Source },
     VoidReturn,
 }
@@ -148,6 +187,8 @@ impl Debug for Instruction {
                 source2,
                 op,
             } => write!(f, "{dest} = {op:?} {source1} {source2}"),
+            Self::AllocArray { name, size } => write!(f, "alloc {name}[{size}]"),
+            Self::AllocScalar { name } => write!(f, "alloc {name}"),
             Self::Load { dest, source } => write!(f, "{dest} = load {source}"),
             Self::Store { dest, source } => write!(f, "store {dest} {source}"),
             Self::Unary { dest, source, op } => write!(f, "{dest} = {op:?} {source}"),
@@ -157,11 +198,12 @@ impl Debug for Instruction {
                 yes,
                 no,
             } => write!(f, "{} = select {} {} {}", dest, cond, yes, no),
-            Self::BoundGuard { value, bound } => write!(f, "bound_guard {} {}", value, bound),
             Self::ReturnGuard => write!(f, "return guard"),
-            Self::StackAlloc { symbol } => write!(f, "stack_alloc {}", symbol),
             Self::VoidCall { symbol, args } => write!(f, "void call {} {:?}", symbol, args),
             Self::Call { dest, symbol, args } => write!(f, "{} = call {} {:?}", dest, symbol, args),
+            Self::ExternCall { dest, symbol, args } => {
+                write!(f, "{} = extern call {} {:?}", dest, symbol, args)
+            }
             Self::Return { value } => write!(f, "return {}", value),
             Self::VoidReturn => write!(f, "ret"),
         }
@@ -187,19 +229,19 @@ impl Instruction {
             source: Source::Offset(symbol.into(), offset),
         }
     }
-    pub fn new_bound_check(reg: Reg, bound: u64) -> Self {
-        Self::BoundGuard {
-            value: reg.into(),
-            bound,
-        }
-    }
-    pub fn new_store(symbol: impl Into<Symbol>, source: Reg) -> Self {
+
+    pub fn new_store(symbol: impl Into<Symbol>, source: impl Into<Source>) -> Self {
         Self::Store {
             dest: Dest::Symbol(symbol.into()),
             source: source.into(),
         }
     }
-    pub fn new_store_offset(symbol: impl Into<Symbol>, offset: Reg, source: Reg, _bound: u64) -> Self {
+    pub fn new_store_offset(
+        symbol: impl Into<Symbol>,
+        offset: Reg,
+        source: Reg,
+        _bound: u64,
+    ) -> Self {
         Self::Store {
             dest: Dest::Offset(symbol.into(), offset),
             source: source.into(),
@@ -216,11 +258,7 @@ impl Instruction {
             no: no.into(),
         }
     }
-    pub fn new_stack_alloc(symbol: impl Into<Symbol>) -> Self {
-        Self::StackAlloc {
-            symbol: symbol.into(),
-        }
-    }
+
     pub fn new_void_call(symbol: impl Into<Symbol>, args: Vec<Reg>) -> Self {
         Self::VoidCall {
             symbol: symbol.into(),
@@ -232,6 +270,13 @@ impl Instruction {
     }
     pub fn new_ret_call(reg: Reg, symbol: impl Into<Symbol>, args: Vec<Reg>) -> Self {
         Self::Call {
+            dest: reg.into(),
+            symbol: symbol.into(),
+            args,
+        }
+    }
+    pub fn new_extern_call(reg: Reg, symbol: impl Into<Symbol>, args: Vec<IRExternArg>) -> Self {
+        Self::ExternCall {
             dest: reg.into(),
             symbol: symbol.into(),
             args,
@@ -297,5 +342,9 @@ impl Display for Reg {
 impl Reg {
     pub fn new(id: usize) -> Self {
         Self(id)
+    }
+
+    pub fn num(&self) -> usize {
+        self.0
     }
 }

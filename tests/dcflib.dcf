@@ -1,0 +1,65 @@
+int add(int a, int b) {
+  int c;
+  c = a + b;
+  return c;
+}
+
+int sub(int a, int b) {
+  int c;
+  c = a - b;
+  return c;
+}
+
+int mul(int a, int b) {
+  int c;
+  c = a * b;
+  return c;
+}
+
+int div(int a, int b) {
+  int c;
+  c = a / b;
+  return c;
+}
+
+int rem(int a, int b) {
+  int c;
+  c = a % b;
+  return c;
+}
+
+bool less(int a, int b) {
+  bool c;
+  c = a < b;
+  return c;
+}
+
+bool lesseq(int a, int b) {
+  bool c;
+  c = a <= b;
+  return c;
+}
+
+bool greater(int a, int b) {
+  bool c;
+  c = a > b;
+  return c;
+}
+
+bool greatereq(int a, int b) {
+  bool c;
+  c = a >= b;
+  return c;
+}
+
+bool equal(int a, int b) {
+  bool c;
+  c = a == b;
+  return c;
+}
+
+bool notequal(int a, int b) {
+  bool c;
+  c = a != b;
+  return c;
+}

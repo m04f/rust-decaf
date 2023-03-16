@@ -59,6 +59,12 @@ impl<'a> HIRVar<'a> {
     pub fn is_array(&self) -> bool {
         matches!(self, Self::Array { .. })
     }
+    pub fn array_len(self) -> Option<u64> {
+        match self {
+            Self::Scalar(_) => None,
+            Self::Array { size, .. } => Some(size),
+        }
+    }
     pub fn is_scalar(&self) -> bool {
         matches!(self, Self::Scalar(_))
     }

@@ -1,11 +1,12 @@
-use std::io::stderr;
+use std::io::{stderr, stdout};
 
-use crate::{lexer::Lexer, parser::Parser, semantics::Semantics, dumpcfg::DumpCFG};
+use crate::{lexer::Lexer, parser::Parser, semantics::Semantics, dumpcfg::DumpCFG, asm::Asm};
 
 mod dumpcfg;
 mod lexer;
 mod parser;
 mod semantics;
+mod asm;
 
 trait App {
     fn run(
@@ -28,6 +29,7 @@ enum Mode {
     Parser,
     Semantics,
     DumpCFG,
+    Asm,
 }
 
 struct Config {
@@ -40,7 +42,7 @@ struct Config {
 impl Config {
     fn new() -> Self {
         Self {
-            mode: None,
+            mode: Some(Mode::Asm),
             input_file: None,
             output_file: None,
             // stderr: None,
@@ -57,6 +59,7 @@ impl Config {
             "semantic" => Some(Mode::Semantics),
             "dumpcfg" => Some(Mode::DumpCFG),
             "cfg" => Some(Mode::DumpCFG),
+            "asm" | "assembler" | "compile" | "S" | "c" => Some(Mode::Asm),
             _ => None,
         }
     }
@@ -101,7 +104,7 @@ fn main() {
         .map(|path| {
             Box::new(io::BufWriter::new(fs::File::create(path).unwrap())) as Box<dyn io::Write>
         })
-        .unwrap_or(Box::new(stderr()));
+        .unwrap_or(Box::new(stdout()));
     let mut stderr = Box::new(stderr()) as Box<dyn io::Write>;
     match config.mode {
         Some(Mode::Lexer) => Lexer::run(
@@ -124,7 +127,11 @@ fn main() {
             &mut stderr,
             config.input_file.unwrap_or("/dev/stdin".to_string()),
         ),
-
+        Some(Mode::Asm) => Asm::run(
+            &mut output_stream,
+            &mut stderr,
+            config.input_file.unwrap_or("/dev/stdin".to_string()),
+        ),
         None => {
             println!("No mode specified");
             ExitStatus::Fail

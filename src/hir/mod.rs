@@ -628,7 +628,7 @@ impl<'a> HIRStmt<'a> {
 }
 
 impl<'a> HIRFunction<'a> {
-    fn from_pfunction(
+    pub fn from_pfunction(
         func: PFunction<'a>,
         vst: VSymMap<'a, '_>,
         fst: FSymMap<'a, '_>,

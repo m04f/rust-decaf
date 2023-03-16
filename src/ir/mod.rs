@@ -20,6 +20,9 @@ mod basicblock {
             self.0 += 1;
             reg
         }
+        pub fn allocated(&self) -> usize {
+            self.0
+        }
     }
 
     impl Default for RegAllocator {
@@ -421,7 +424,8 @@ mod graph {
             }
         }
 
-        /// returns a unique identifier for the basicblock
+        /// returns a unique identifier for the basicblock. The id is unique for the hole program.
+        /// (**ignoring ids for dropped nodes**).
         pub fn id(&self) -> NodeId {
             NodeId(self.as_ref() as *const _ as usize)
         }
@@ -442,6 +446,13 @@ mod graph {
         visited: HashSet<NonNull<BasicBlock>>,
         stack: Vec<DfsNode>,
         _marker: Marker<&'a mut BasicBlock>,
+    }
+
+    pub struct PsudoInOrder<'a> {
+        stack: Vec<NonNull<BasicBlock>>,
+        /// we have to keep the visited node because there are cycles in a typical cfg.
+        visited: HashSet<NonNull<BasicBlock>>,
+        _marker: Marker<&'a BasicBlock>,
     }
 
     #[derive(Debug)]
@@ -500,32 +511,33 @@ mod graph {
         pub fn next(&mut self) -> Option<NodeMut> {
             if let Some(top) = self.stack.pop() {
                 match top {
-                    DfsNode::Shallow(node) => {
-                        self.visited.insert(node);
-                        Some(NodeMut {
+                    DfsNode::Shallow(node) => Some(NodeMut {
+                        block: node,
+                        _marker: Marker,
+                    }),
+                    DfsNode::Recurse(node) => match unsafe { node.as_ref() }.terminator() {
+                        None => Some(NodeMut {
                             block: node,
                             _marker: Marker,
-                        })
-                    }
-                    DfsNode::Recurse(node) => match unsafe { node.as_ref() }.terminator() {
-                        None => {
-                            self.visited.insert(node);
-                            Some(NodeMut {
-                                block: node,
-                                _marker: Marker,
-                            })
-                        }
+                        }),
                         Some(Terminator::Tail { block, .. }) => {
                             self.stack.push(DfsNode::Shallow(node));
-                            // PERF: it is quite hard for the compiler to optimize this
-                            self.stack.push(DfsNode::Recurse(*block));
+                            if !self.visited.contains(block) {
+                                self.stack.push(DfsNode::Recurse(*block));
+                                self.visited.insert(*block);
+                            }
                             self.next()
                         }
                         Some(Terminator::Fork { yes, no, .. }) => {
                             self.stack.push(DfsNode::Shallow(node));
-                            self.stack.push(DfsNode::Recurse(*yes));
-                            // PERF: it is quite hard for the compiler to optimize this
-                            self.stack.push(DfsNode::Recurse(*no));
+                            if !self.visited.contains(yes) {
+                                self.stack.push(DfsNode::Recurse(*yes));
+                                self.visited.insert(*yes);
+                            }
+                            if !self.visited.contains(no) {
+                                self.stack.push(DfsNode::Recurse(*no));
+                                self.visited.insert(*no);
+                            }
                             self.next()
                         }
                     },
@@ -573,7 +585,7 @@ mod graph {
     impl<'a> Dfs<'a> {
         fn new(root: &'a BasicBlock) -> Self {
             Self {
-                visited: HashSet::default(),
+                visited: HashSet::from([NonNull::new(root as *const _ as *mut _).unwrap()]),
                 stack: vec![DfsNode::Recurse(
                     NonNull::new(root as *const _ as *mut _).unwrap(),
                 )],
@@ -587,37 +599,73 @@ mod graph {
         fn next(&mut self) -> Option<Self::Item> {
             if let Some(top) = self.stack.pop() {
                 match top {
-                    DfsNode::Shallow(node) => {
-                        self.visited.insert(node);
-                        Some(Node {
+                    DfsNode::Shallow(node) => Some(Node {
+                        block: node,
+                        _marker: Marker,
+                    }),
+                    DfsNode::Recurse(node) => match unsafe { node.as_ref() }.terminator() {
+                        None => Some(Node {
                             block: node,
                             _marker: Marker,
-                        })
-                    }
-                    DfsNode::Recurse(node) => match unsafe { node.as_ref() }.terminator() {
-                        None => {
-                            self.visited.insert(node);
-                            Some(Node {
-                                block: node,
-                                _marker: Marker,
-                            })
-                        }
+                        }),
                         Some(Terminator::Tail { block, .. }) => {
                             self.stack.push(DfsNode::Shallow(node));
                             // PERF: it is quite hard for the compiler to optimize this
-                            self.stack.push(DfsNode::Recurse(*block));
+                            if !self.visited.contains(block) {
+                                self.stack.push(DfsNode::Recurse(*block));
+                                self.visited.insert(*block);
+                            }
                             self.next()
                         }
                         Some(Terminator::Fork { yes, no, .. }) => {
                             self.stack.push(DfsNode::Shallow(node));
-                            self.stack.push(DfsNode::Recurse(*yes));
-                            // PERF: it is quite hard for the compiler to optimize this
-                            self.stack.push(DfsNode::Recurse(*no));
+                            if !self.visited.contains(yes) {
+                                self.stack.push(DfsNode::Recurse(*yes));
+                                self.visited.insert(*yes);
+                            }
+                            if !self.visited.contains(no) {
+                                self.stack.push(DfsNode::Recurse(*no));
+                                self.visited.insert(*no);
+                            }
                             self.next()
                         }
                     },
                 }
             } else {
+                None
+            }
+        }
+    }
+
+    impl<'a> Iterator for PsudoInOrder<'a> {
+        type Item = Node<'a>;
+        fn next(&mut self) -> Option<Self::Item> {
+            if let Some(node) = self.stack.pop() {
+                self.visited.insert(node);
+                let node = Node {
+                    block: node,
+                    _marker: Marker,
+                };
+                match node.terminator() {
+                    None => Some(node),
+                    Some(Terminator::Tail { block, .. }) => {
+                        if !self.visited.contains(block) {
+                            self.stack.push(*block);
+                        }
+                        Some(node)
+                    }
+                    Some(Terminator::Fork { yes, no, .. }) => {
+                        if !self.visited.contains(no) {
+                            self.stack.push(*no);
+                        }
+                        if !self.visited.contains(yes) {
+                            self.stack.push(*yes);
+                        }
+                        Some(node)
+                    }
+                }
+            } else {
+                self.visited.clear();
                 None
             }
         }
@@ -652,8 +700,16 @@ mod graph {
 
         pub fn dfs_mut(&mut self) -> DfsMut<'_> {
             DfsMut {
-                visited: HashSet::default(),
+                visited: HashSet::from([self.root]),
                 stack: vec![DfsNode::Recurse(self.root)],
+                _marker: Marker,
+            }
+        }
+
+        pub fn psudo_inorder(&self) -> PsudoInOrder<'_> {
+            PsudoInOrder {
+                stack: vec![self.root],
+                visited: HashSet::default(),
                 _marker: Marker,
             }
         }
@@ -673,6 +729,7 @@ mod graph {
     pub struct Function {
         graph: Graph,
         name: String,
+        allocated_regs: usize,
         args: Vec<String>,
     }
 
@@ -689,20 +746,32 @@ mod graph {
     }
 
     impl Function {
-        pub fn new(name: impl ToString, graph: Graph, args: Vec<String>) -> Self {
+        pub fn new(
+            name: impl ToString,
+            graph: Graph,
+            allocated_regs: usize,
+            args: Vec<String>,
+        ) -> Self {
             Self {
                 name: name.to_string(),
                 args,
+                allocated_regs,
                 graph,
             }
         }
 
-        pub fn args(&self) -> &[String] {
+        pub fn allocated_regs(&self) -> usize {
+            self.allocated_regs
+        }
+
+        pub fn args(&self) -> &[Symbol] {
             &self.args
         }
 
         pub fn to_dot(&self) -> Dot {
-            self.as_ref().to_dot(Some(self.name()))
+            let dot = self.as_ref().to_dot(Some(self.name()));
+            println!("{}", dot);
+            dot
         }
 
         pub fn name(&self) -> &str {
@@ -715,6 +784,31 @@ mod graph {
 
         pub fn graph_mut(&mut self) -> &mut Graph {
             &mut self.graph
+        }
+    }
+
+    pub struct Program {
+        pub(super) functions: Vec<Function>,
+        pub(super) globals: Vec<(String, usize)>,
+    }
+
+    impl Program {
+        pub fn functions(&self) -> &[Function] {
+            &self.functions
+        }
+
+        pub fn globals(&self) -> &[(String, usize)] {
+            &self.globals
+        }
+
+        pub fn new<F: Into<Function>>(
+            globals: impl IntoIterator<Item = (String, usize)>,
+            functions: impl IntoIterator<Item = F>,
+        ) -> Self {
+            Self {
+                functions: functions.into_iter().map(|f| f.into()).collect(),
+                globals: globals.into_iter().collect(),
+            }
         }
     }
 }
@@ -866,14 +960,73 @@ mod ccfg {
 }
 
 mod destruct {
-    use super::ccfg::*;
+    use std::{
+        collections::{hash_map::RandomState, HashSet},
+        hash::BuildHasher,
+    };
+
+    use super::{ccfg::*, IRExternArg, Program};
     use crate::{
         hir::*,
         ir::{BBMetaData, BasicBlock, Function, Immediate, Instruction, Reg, RegAllocator},
+        span::Span,
     };
 
+    struct NameMangler<'a> {
+        id: RandomState,
+        names: HashSet<Span<'a>>,
+        parent: Option<&'a Self>,
+        mangle: bool,
+    }
+
+    impl<'a> NameMangler<'a> {
+        fn new(parent: Option<&'a Self>, names: impl IntoIterator<Item = Span<'a>>) -> Self {
+            Self {
+                id: RandomState::new(),
+                names: names.into_iter().collect(),
+                parent,
+                mangle: true,
+            }
+        }
+
+        pub fn new_unmangled(
+            parent: Option<&'a Self>,
+            names: impl IntoIterator<Item = Span<'a>>,
+        ) -> Self {
+            Self {
+                id: RandomState::new(),
+                names: names.into_iter().collect(),
+                parent,
+                mangle: false,
+            }
+        }
+
+        fn mangle(&self, name: Span<'a>) -> String {
+            if self.names.contains(&name) {
+                if self.mangle {
+                    format!(
+                        "_{name}_{hash:x}",
+                        name = name.to_string(),
+                        hash = self.id.hash_one(name.as_bytes())
+                    )
+                } else {
+                    name.to_string()
+                }
+            } else {
+                self.parent
+                    .map(|par| par.mangle(name))
+                    // if it does not exist then it is a global variable
+                    .unwrap_or(name.to_string())
+            }
+        }
+    }
+
     impl<'a> HIRExpr<'a> {
-        fn destruct(&self, reg_allocator: &mut RegAllocator) -> (CCfg, Reg) {
+        fn destruct<'b>(
+            &self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler<'a>,
+        ) -> (CCfg<'b>, Reg) {
             use HIRExpr::*;
             match self {
                 HIRExpr::Literal(lit) => {
@@ -900,23 +1053,28 @@ mod destruct {
                         let res = reg_allocator.alloc();
                         let bb = BasicBlock::new(
                             BBMetaData::new(None),
-                            &[Instruction::new_load(res, *sym.val())],
+                            &[Instruction::new_load(res, mangler.mangle(sym.into_val()))],
                         );
                         (CCfg::new(Box::new(bb)), res)
                     }
                     HIRLoc::Index { arr, size, index } => {
-                        let (mut index_ccfg, index) = index.destruct(reg_allocator);
+                        let (mut index_ccfg, index) = index.destruct(reg_allocator, mangler);
                         let res = reg_allocator.alloc();
                         index_ccfg.append(CCfg::new(Box::new(BasicBlock::new(
                             BBMetaData::new(None),
-                            &[Instruction::new_load_offset(res, *arr.val(), index, *size)],
+                            &[Instruction::new_load_offset(
+                                res,
+                                mangler.mangle(arr.into_val()),
+                                index,
+                                *size,
+                            )],
                         ))));
                         (index_ccfg, res)
                     }
                 },
                 HIRExpr::Arith { op, lhs, rhs } => {
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator);
-                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
+                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
                     let res = reg_allocator.alloc();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -927,8 +1085,8 @@ mod destruct {
                 }
 
                 HIRExpr::Rel { op, lhs, rhs } => {
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator);
-                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
+                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
                     let res = reg_allocator.alloc();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -938,8 +1096,8 @@ mod destruct {
                     (ccfg_lhs, res)
                 }
                 Eq { op, lhs, rhs } => {
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator);
-                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
+                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
                     let res = reg_allocator.alloc();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -949,7 +1107,7 @@ mod destruct {
                     (ccfg_lhs, res)
                 }
                 Neg(e) => {
-                    let (mut ccfg, res_neg) = e.destruct(reg_allocator);
+                    let (mut ccfg, res_neg) = e.destruct(reg_allocator, mangler);
                     let res = reg_allocator.alloc();
                     let bb = BasicBlock::new(
                         BBMetaData::new(None),
@@ -959,7 +1117,7 @@ mod destruct {
                     (ccfg, res)
                 }
                 Not(e) => {
-                    let (mut ccfg, res_not) = e.destruct(reg_allocator);
+                    let (mut ccfg, res_not) = e.destruct(reg_allocator, mangler);
                     let res = reg_allocator.alloc();
                     let bb = BasicBlock::new(
                         BBMetaData::new(None),
@@ -969,9 +1127,9 @@ mod destruct {
                     (ccfg, res)
                 }
                 Ter { cond, yes, no } => {
-                    let (mut ccfg_yes, yes) = yes.destruct(reg_allocator);
-                    let (ccfg_no, no) = no.destruct(reg_allocator);
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator);
+                    let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler);
+                    let (ccfg_no, no) = no.destruct(reg_allocator, mangler);
+                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
                     let res = reg_allocator.alloc();
                     let select = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -980,24 +1138,98 @@ mod destruct {
                     ccfg_yes.append(ccfg_no).append(ccfg_cond).append(select);
                     (ccfg_yes, res)
                 }
-                Call(call) => call.destruct_ret(reg_allocator),
-                Cond { .. } => todo!(),
+                Call(call) => call.destruct_ret(reg_allocator, mangler),
+                Cond {
+                    lhs,
+                    rhs,
+                    op: CondOp::Or,
+                } => {
+                    let mut scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
+                    let sc = format!("__sc{:?}", scbb.as_ref() as *const _);
+                    scbb.push(Instruction::AllocScalar { name: sc.clone() });
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let set_true = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(sc.clone(), true)],
+                    )));
+                    let set_false = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(sc.clone(), false)],
+                    )));
+                    ccfg_rhs.append_cond(rhs, set_true, set_false);
+                    let set_true = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(sc.clone(), true)],
+                    )));
+                    ccfg_lhs.append_cond(lhs, set_true, ccfg_rhs);
+                    let mut beg = CCfg::new(scbb);
+                    beg.append(ccfg_lhs);
+                    let res = reg_allocator.alloc();
+                    let load = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_load(res, sc)],
+                    )));
+                    beg.append(load);
+                    (beg, res)
+                }
+                Cond {
+                    op: CondOp::And,
+                    lhs,
+                    rhs,
+                } => {
+                    let mut scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
+                    let sc = format!("__sc{:?}", scbb.as_ref() as *const _);
+                    scbb.push(Instruction::AllocScalar { name: sc.clone() });
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let set_false = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(sc.clone(), false)],
+                    )));
+                    let set_true = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(sc.clone(), true)],
+                    )));
+                    ccfg_rhs.append_cond(rhs, set_true, set_false);
+                    let set_false = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(sc.clone(), false)],
+                    )));
+                    ccfg_lhs.append_cond(lhs, ccfg_rhs, set_false);
+                    let mut beg = CCfg::new(scbb);
+                    beg.append(ccfg_lhs);
+                    let res = reg_allocator.alloc();
+                    let load = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_load(res, sc)],
+                    )));
+                    beg.append(load);
+                    (beg, res)
+                }
             }
         }
     }
 
     impl<'a> HIRCall<'a> {
-        fn destruct_ret(&self, reg_allocator: &mut RegAllocator) -> (CCfg, Reg) {
+        fn destruct_ret<'b>(
+            &self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler<'a>,
+        ) -> (CCfg<'b>, Reg) {
             match self {
                 HIRCall::Decaf { name, args, .. } => {
-                    let (mut ccfg, args) = args.iter().map(|arg| arg.destruct(reg_allocator)).fold(
-                        (CCfg::new_empty(), Vec::new()),
-                        |(mut ccfg, mut args), (ccfg_arg, arg)| {
-                            ccfg.append(ccfg_arg);
-                            args.push(arg);
-                            (ccfg, args)
-                        },
-                    );
+                    let (mut ccfg, args) = args
+                        .iter()
+                        .map(|arg| arg.destruct(reg_allocator, mangler))
+                        .fold(
+                            (CCfg::new_empty(), Vec::new()),
+                            |(mut ccfg, mut args), (ccfg_arg, arg)| {
+                                ccfg.append(ccfg_arg);
+                                args.push(arg);
+                                (ccfg, args)
+                            },
+                        );
                     let res = reg_allocator.alloc();
                     let call = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -1006,17 +1238,47 @@ mod destruct {
                     ccfg.append(call);
                     (ccfg, res)
                 }
-                HIRCall::Extern { .. } => todo!(),
+                HIRCall::Extern { args, name } => {
+                    let mut ccfg = CCfg::new_empty();
+                    let args = args
+                        .iter()
+                        .map(|arg| {
+                            match arg {
+                                ExternArg::String(sym) => Err(*sym),
+                                ExternArg::Array(..) => unimplemented!(),
+                                ExternArg::Expr(e) => Ok(e.destruct(reg_allocator, mangler)),
+                            }
+                            .map(|(ccfg_arg, arg)| {
+                                ccfg.append(ccfg_arg);
+                                IRExternArg::Source(arg.into())
+                            })
+                            .map_err(|slice| IRExternArg::String(slice.to_string()))
+                            .unwrap_or_else(|e| e)
+                        })
+                        .collect();
+                    let res = reg_allocator.alloc();
+                    let call = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_extern_call(res, *name, args)],
+                    )));
+                    ccfg.append(call);
+                    (ccfg, res)
+                }
             }
         }
     }
 
     impl<'a> HIRStmt<'a> {
-        fn destruct(&self, reg_allocator: &mut RegAllocator, loop_exit: Option<&LoopExit>) -> CCfg {
+        fn destruct<'b>(
+            &'a self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler<'a>,
+            loop_exit: Option<&LoopExit<'b>>,
+        ) -> CCfg<'b> {
             use HIRStmt::*;
             match self {
                 Expr(e) => {
-                    let (ccfg, _) = e.destruct(reg_allocator);
+                    let (ccfg, _) = e.destruct(reg_allocator, mangler);
                     ccfg
                 }
                 Break => {
@@ -1029,10 +1291,10 @@ mod destruct {
                     ccfg.append_continue(loop_exit.unwrap().r#continue());
                     ccfg
                 }
-                Assign(assign) => assign.destruct(reg_allocator),
+                Assign(assign) => assign.destruct(reg_allocator, mangler),
 
                 Return(Some(e)) => {
-                    let (mut ccfg, res) = e.destruct(reg_allocator);
+                    let (mut ccfg, res) = e.destruct(reg_allocator, mangler);
                     let instruction = Instruction::new_return(res);
                     let bb = BasicBlock::new(BBMetaData::new(None), &[instruction]);
                     ccfg.append(CCfg::new(Box::new(bb)));
@@ -1043,16 +1305,16 @@ mod destruct {
                     &[Instruction::new_void_ret()],
                 ))),
                 If { cond, yes, no } => {
-                    let (mut ccfg_cond, cond) = cond.destruct(reg_allocator);
-                    let ccfg_yes = yes.destruct(reg_allocator, loop_exit);
-                    let ccfg_no = no.destruct(reg_allocator, loop_exit);
+                    let (mut ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
+                    let ccfg_yes = yes.destruct(reg_allocator, mangler, loop_exit);
+                    let ccfg_no = no.destruct(reg_allocator, mangler, loop_exit);
                     ccfg_cond.append_cond(cond, ccfg_yes, ccfg_no);
                     ccfg_cond
                 }
                 While { cond, body } => {
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator);
+                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
                     let loop_exit = LoopExit::new(ccfg_cond, cond);
-                    let body = body.destruct(reg_allocator, Some(&loop_exit));
+                    let body = body.destruct(reg_allocator, mangler, Some(&loop_exit));
                     loop_exit.build(body)
                 }
                 For {
@@ -1061,12 +1323,12 @@ mod destruct {
                     update,
                     body,
                 } => {
-                    let mut init = init.destruct(reg_allocator);
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator);
+                    let mut init = init.destruct(reg_allocator, mangler);
+                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
                     let loop_exit = LoopExit::new(ccfg_cond, cond);
 
-                    let update = update.destruct(reg_allocator);
-                    let mut body = body.destruct(reg_allocator, Some(&loop_exit));
+                    let update = update.destruct(reg_allocator, mangler);
+                    let mut body = body.destruct(reg_allocator, mangler, Some(&loop_exit));
                     body.append(update);
                     let r#loop = loop_exit.build(body);
 
@@ -1078,20 +1340,29 @@ mod destruct {
     }
 
     impl<'a> HIRAssign<'a> {
-        fn destruct(&self, reg_allocator: &mut RegAllocator) -> CCfg {
-            let (mut ccfg, rhs) = self.rhs.destruct(reg_allocator);
+        fn destruct<'b>(
+            &self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler,
+        ) -> CCfg<'b> {
+            let (mut ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler);
             match &self.lhs {
                 HIRLoc::Index { arr, size, index } => {
-                    let (index_ccfg, index) = index.destruct(reg_allocator);
+                    let (index_ccfg, index) = index.destruct(reg_allocator, mangler);
                     let store = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store_offset(*arr.val(), index, rhs, *size)],
+                        &[Instruction::new_store_offset(
+                            mangler.mangle(arr.into_val()),
+                            index,
+                            rhs,
+                            *size,
+                        )],
                     )));
                     ccfg.append(index_ccfg).append(store);
                     ccfg
                 }
                 HIRLoc::Scalar(sym) => {
-                    let store = Instruction::new_store(*sym.val(), rhs);
+                    let store = Instruction::new_store(mangler.mangle(sym.into_val()), rhs);
                     ccfg.append(CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[store],
@@ -1103,32 +1374,73 @@ mod destruct {
     }
 
     impl<'a> HIRBlock<'a> {
-        fn destruct(&self, reg_allocator: &mut RegAllocator, loop_exit: Option<&LoopExit>) -> CCfg {
-            self.stmts
-                .iter()
-                .map(|stmt| stmt.destruct(reg_allocator, loop_exit))
-                .try_fold(CCfg::new_empty(), |mut ccfg, stmt| {
-                    ccfg.append(stmt);
-                    if ccfg.can_append() {
-                        Ok(ccfg)
+        fn destruct<'b>(
+            &self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler<'a>,
+            loop_exit: Option<&LoopExit<'b>>,
+        ) -> CCfg<'b> {
+            let mangler = NameMangler::new(Some(mangler), self.decls.keys().copied());
+            let stack_allocs = self
+                .decls()
+                .values()
+                .map(|decl| {
+                    if decl.is_scalar() {
+                        Instruction::AllocScalar {
+                            name: mangler.mangle(decl.name()),
+                        }
                     } else {
-                        Err(ccfg)
+                        Instruction::AllocArray {
+                            name: mangler.mangle(decl.name()),
+                            size: decl.array_len().unwrap(),
+                        }
                     }
                 })
-                .unwrap_or_else(|ccfg| ccfg)
+                .collect::<Vec<_>>();
+            let mut ccfg = CCfg::new(Box::new(BasicBlock::new(
+                BBMetaData::default(),
+                &stack_allocs,
+            )));
+            for stmt in self.stmts.iter() {
+                let stmt = stmt.destruct(reg_allocator, &mangler, loop_exit);
+                ccfg.append(stmt);
+                if !ccfg.can_append() {
+                    break;
+                }
+            }
+            ccfg
         }
     }
 
     impl<'a> HIRFunction<'a> {
         pub fn destruct(&self) -> Function {
-            let mut graph = self
-                .body
-                .destruct(&mut RegAllocator::new(), None)
-                .build_graph();
+            let mangler = NameMangler::new_unmangled(None, self.args_sorted.iter().copied());
+            // let stack_allocs = self
+            //     .args
+            //     .values()
+            //     .map(|decl| {
+            //         if decl.is_scalar() {
+            //             Instruction::AllocScalar {
+            //                 name: mangler.mangle(decl.name()),
+            //             }
+            //         } else {
+            //             Instruction::AllocArray {
+            //                 name: mangler.mangle(decl.name()),
+            //                 size: decl.array_len().unwrap(),
+            //             }
+            //         }
+            //     })
+            //     .collect::<Vec<_>>();
+            let empty = vec![];
+            let mut ccfg = CCfg::new(Box::new(BasicBlock::new(BBMetaData::default(), &empty)));
+            let mut reg_allocator = RegAllocator::new();
+            let body = self.body.destruct(&mut reg_allocator, &mangler, None);
+            ccfg.append(body);
+            let mut graph = ccfg.build_graph();
 
             // put return guards on the leafs.
-            let mut bfs = graph.bfs_mut();
             if self.ret.is_some() {
+                let mut bfs = graph.bfs_mut();
                 while let Some(mut node) = bfs.next() {
                     if node.as_ref().is_leaf() {
                         node.as_mut()
@@ -1136,9 +1448,35 @@ mod destruct {
                             .push(Instruction::ReturnGuard)
                     }
                 }
+            } else {
+                let mut bfs = graph.bfs_mut();
+                while let Some(mut node) = bfs.next() {
+                    if node.as_ref().is_leaf() {
+                        node.as_mut()
+                            .instructions_mut()
+                            .push(Instruction::VoidReturn)
+                    }
+                }
             }
 
-            Function::new(self.name, graph, self.args_sorted.iter().map(|arg| arg.to_string()).collect())
+            Function::new(
+                self.name,
+                graph,
+                reg_allocator.allocated(),
+                self.args_sorted.iter().map(|arg| arg.to_string()).collect(),
+            )
+        }
+    }
+
+    impl<'a> HIRRoot<'a> {
+        pub fn destruct(&self) -> Program {
+            Program::new(
+                self.globals.values().map(|var| match var {
+                    HIRVar::Scalar(name) => (name.into_val().to_string(), 8),
+                    HIRVar::Array { arr, size, .. } => (arr.val().to_string(), 8 * *size as usize),
+                }),
+                self.functions.values().map(|func| func.destruct()),
+            )
         }
     }
 }
@@ -1154,6 +1492,12 @@ mod dot {
     use crate::ir::{Graph, NeighbouringNodes, Node};
 
     pub struct Dot(String);
+
+    impl Display for Dot {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
 
     impl Dot {
         /// compiles the given graph. (it currently compiles to svg image no matter what).
@@ -1222,6 +1566,8 @@ mod dot {
             let graph_body = self
                 .dfs()
                 .map(|node| {
+                    println!("address: {:?}", node.as_ref() as *const _);
+                    println!("{:?}", node.as_ref());
                     format!(
                         // leaving two spaces for indentation.
                         "  {id} [label=\"{label}\" shape=box]\n  {links}\n",
@@ -1287,6 +1633,23 @@ mod test {
         let code = SpanSource::new(
             br#"void main() { return ; } int add(int a, int b) { int c; c = a + b; return c; }"#,
         );
+        let mut parser = Parser::new(
+            tokens(code.source()).map(|s| s.map(|t| t.unwrap())),
+            |_| unreachable!(),
+        );
+        let proot = parser.doc_elems().collect();
+        let hirtree = HIRRoot::from_proot(proot).unwrap();
+
+        hirtree.functions.values().for_each(|func| {
+            func.destruct();
+        });
+    }
+
+    #[test]
+    fn some_test_that_fails() {
+        let code = SpanSource::new(include_bytes!(
+            "../../decaf-tests/codegen/input/04-math2.dcf"
+        ));
         let mut parser = Parser::new(
             tokens(code.source()).map(|s| s.map(|t| t.unwrap())),
             |_| unreachable!(),

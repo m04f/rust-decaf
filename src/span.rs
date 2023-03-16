@@ -190,6 +190,10 @@ impl<'a> Span<'a> {
         self.source
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        self.source()
+    }
+
     pub fn bytes(&self) -> Copied<slice::Iter<u8>> {
         self.source().iter().copied()
     }
