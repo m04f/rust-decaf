@@ -228,7 +228,7 @@ mod basicblock {
             if let Some(tail) = self.tail() {
                 if p(tail) {
                     self.instructions.extend(tail.instructions.clone());
-                    debug_assert!(self.bypass_tail());
+                    self.bypass_tail();
                     true
                 } else {
                     false
