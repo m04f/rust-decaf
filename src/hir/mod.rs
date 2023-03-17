@@ -652,7 +652,7 @@ impl<'a> HIRFunction<'a> {
 }
 
 impl<'a> HIRRoot<'a> {
-    pub fn from_proot(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
+    pub fn from_proot(root: PRoot<'a>, ensure_main: bool) -> Result<Self, Vec<Error>> {
         let globals = construct_var_hashmap(root.decls)?;
         let mut sigs = construct_sig_hashmap(&root.imports)?;
         let imports = root
@@ -696,8 +696,14 @@ impl<'a> HIRRoot<'a> {
                     imports,
                 })
             }
-        } else {
+        } else if ensure_main {
             Err(vec![RootDoesNotContainMain])
+        } else {
+            Ok(Self {
+                globals,
+                functions,
+                imports,
+            })
         }
     }
 }

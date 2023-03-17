@@ -382,6 +382,31 @@ pub enum Op {
     Or,
 }
 
+impl Op {
+    pub fn is_cmp(&self) -> bool {
+        matches!(
+            self,
+            Self::Less
+                | Self::LessEqual
+                | Self::Greater
+                | Self::GreaterEqual
+                | Self::Equal
+                | Self::NotEqual
+        )
+    }
+
+    pub fn is_arith(&self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Mod
+        )
+    }
+
+    pub fn is_logic(&self) -> bool {
+        matches!(self, Self::And | Self::Or)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PStmt<'a> {
     Call(PCall<'a>),

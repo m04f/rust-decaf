@@ -1,5 +1,7 @@
 //! TODO: this module requries alot of refactoring.
 
+#[cfg(test)]
+mod test;
 mod instruction;
 pub use basicblock::*;
 pub use dot::*;
@@ -9,37 +11,41 @@ pub use instruction::*;
 mod basicblock {
     pub use crate::ir::instruction::*;
     use std::{collections::HashSet, ptr::NonNull};
-    pub struct RegAllocator(usize);
+
+    #[derive(Default)]
+    pub struct RegAllocator(u32);
 
     impl RegAllocator {
         pub fn new() -> Self {
-            Self(0)
+            Self::default()
         }
-        pub fn alloc(&mut self) -> Reg {
+
+        pub fn alloc_ssa(&mut self) -> Reg {
             let reg = Reg::new(self.0);
             self.0 += 1;
             reg
         }
-        pub fn allocated(&self) -> usize {
+
+        pub fn alloc_sc(&mut self) -> Sc {
+            let reg = Sc::new(self.0);
+            self.0 += 1;
+            reg
+        }
+
+        pub fn allocated(&self) -> u32 {
             self.0
         }
     }
 
-    impl Default for RegAllocator {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
     #[derive(Debug, Clone, Copy)]
-    pub(super) enum Terminator {
+    pub(super) enum Terminator<'a> {
         Fork {
             cond: Reg,
-            yes: NonNull<BasicBlock>,
-            no: NonNull<BasicBlock>,
+            yes: NonNull<BasicBlock<'a>>,
+            no: NonNull<BasicBlock<'a>>,
         },
         Tail {
-            block: NonNull<BasicBlock>,
+            block: NonNull<BasicBlock<'a>>,
         },
     }
 
@@ -63,6 +69,7 @@ mod basicblock {
         }
     }
 
+    #[allow(unused)]
     #[derive(Debug, Clone, Default)]
     pub struct BBMetaData {
         ty: Option<BBType>,
@@ -74,25 +81,25 @@ mod basicblock {
             Self { ty, is_root: false }
         }
 
-        pub fn build_block(self, insrtctions: &[Instruction]) -> BasicBlock {
+        pub fn build_block<'b>(self, insrtctions: &[Instruction<'b>]) -> BasicBlock<'b> {
             BasicBlock::new(self, insrtctions)
         }
     }
 
     #[derive(Debug, Clone, Default)]
-    pub struct BasicBlock {
-        incoming: HashSet<NonNull<BasicBlock>>,
-        instructions: Vec<Instruction>,
-        terminator: Option<Terminator>,
+    pub struct BasicBlock<'b> {
+        incoming: HashSet<NonNull<BasicBlock<'b>>>,
+        instructions: Vec<Instruction<'b>>,
+        terminator: Option<Terminator<'b>>,
         metadata: BBMetaData,
     }
 
-    impl BasicBlock {
-        pub(super) fn terminator(&self) -> Option<&Terminator> {
+    impl<'b> BasicBlock<'b> {
+        pub(super) fn terminator(&self) -> Option<&Terminator<'b>> {
             self.terminator.as_ref()
         }
 
-        pub fn insrtuctions(&self) -> &[Instruction] {
+        pub fn insrtuctions(&self) -> &[Instruction<'b>] {
             &self.instructions
         }
 
@@ -106,7 +113,7 @@ mod basicblock {
             self.metadata.is_root = true;
         }
 
-        pub fn instructions_mut(&mut self) -> &mut Vec<Instruction> {
+        pub fn instructions_mut(&mut self) -> &mut Vec<Instruction<'b>> {
             &mut self.instructions
         }
 
@@ -120,11 +127,11 @@ mod basicblock {
             self.terminator = other.terminator;
         }
 
-        pub fn push(&mut self, instruction: Instruction) {
+        pub fn push(&mut self, instruction: Instruction<'b>) {
             self.instructions.push(instruction);
         }
 
-        pub fn new(metadata: BBMetaData, instruction: &[Instruction]) -> Self {
+        pub fn new(metadata: BBMetaData, instruction: &[Instruction<'b>]) -> Self {
             Self {
                 incoming: HashSet::new(),
                 instructions: instruction.to_vec(),
@@ -214,7 +221,7 @@ mod basicblock {
         }
 
         /// returns the tail of the block
-        pub fn tail(&self) -> Option<&BasicBlock> {
+        pub fn tail(&self) -> Option<&BasicBlock<'b>> {
             match self.terminator {
                 Some(Terminator::Tail { block, .. }) => Some(unsafe { block.as_ref() }),
                 _ => None,
@@ -224,7 +231,7 @@ mod basicblock {
         /// merges the tail block if it is a tail block. and `f(tail)` returns true.
         ///
         /// returns `true` if the tail was mereged
-        pub fn merge_tail_if(&mut self, p: impl FnOnce(&BasicBlock) -> bool) -> bool {
+        pub fn merge_tail_if(&mut self, p: impl FnOnce(&BasicBlock<'b>) -> bool) -> bool {
             if let Some(tail) = self.tail() {
                 if p(tail) {
                     self.instructions.extend(tail.instructions.clone());
@@ -277,12 +284,12 @@ mod graph {
         ptr::NonNull,
     };
 
-    pub struct Graph {
-        root: NonNull<BasicBlock>,
-        _marker: Marker<BasicBlock>,
+    pub struct Graph<'a> {
+        root: NonNull<BasicBlock<'a>>,
+        _marker: Marker<BasicBlock<'a>>,
     }
 
-    impl Drop for Graph {
+    impl Drop for Graph<'_> {
         fn drop(&mut self) {
             let mut dfs = self.dfs_mut();
             while let Some(mut block) = dfs.next() {
@@ -298,44 +305,44 @@ mod graph {
         }
     }
 
-    pub struct Node<'a> {
-        block: NonNull<BasicBlock>,
-        _marker: Marker<&'a BasicBlock>,
+    pub struct Node<'b> {
+        block: NonNull<BasicBlock<'b>>,
+        _marker: Marker<&'b BasicBlock<'b>>,
     }
 
-    pub struct NodeMut<'a> {
-        block: NonNull<BasicBlock>,
-        _marker: Marker<&'a BasicBlock>,
+    pub struct NodeMut<'b> {
+        block: NonNull<BasicBlock<'b>>,
+        _marker: Marker<&'b BasicBlock<'b>>,
     }
 
-    impl AsRef<BasicBlock> for Node<'_> {
-        fn as_ref(&self) -> &BasicBlock {
+    impl<'b> AsRef<BasicBlock<'b>> for Node<'b> {
+        fn as_ref(&self) -> &BasicBlock<'b> {
             unsafe { self.block.as_ref() }
         }
     }
 
-    impl AsRef<BasicBlock> for NodeMut<'_> {
-        fn as_ref(&self) -> &BasicBlock {
+    impl<'b> AsRef<BasicBlock<'b>> for NodeMut<'b> {
+        fn as_ref(&self) -> &BasicBlock<'b> {
             unsafe { self.block.as_ref() }
         }
     }
 
-    impl AsMut<BasicBlock> for NodeMut<'_> {
-        fn as_mut(&mut self) -> &mut BasicBlock {
+    impl<'b> AsMut<BasicBlock<'b>> for NodeMut<'b> {
+        fn as_mut(&mut self) -> &mut BasicBlock<'b> {
             unsafe { self.block.as_mut() }
         }
     }
 
-    impl NodeMut<'_> {
-        pub fn instructions_mut(&mut self) -> &mut Vec<Instruction> {
+    impl<'b> NodeMut<'b> {
+        pub fn instructions_mut(&mut self) -> &mut Vec<Instruction<'b>> {
             self.as_mut().instructions_mut()
         }
 
-        fn terminator(&self) -> Option<&Terminator> {
+        fn terminator(&self) -> Option<&Terminator<'b>> {
             self.as_ref().terminator()
         }
 
-        pub fn tail(&self) -> Option<Node> {
+        pub fn tail(&self) -> Option<Node<'b>> {
             self.as_ref().terminator().and_then(|t| match t {
                 &Terminator::Tail { block, .. } => Some(Node {
                     block,
@@ -354,7 +361,7 @@ mod graph {
             self.as_mut().bypass_tail()
         }
 
-        pub fn as_node(&self) -> Node {
+        pub fn as_node(&self) -> Node<'b> {
             Node {
                 block: self.block,
                 _marker: Marker,
@@ -365,7 +372,7 @@ mod graph {
             self.as_ref().terminator().is_none()
         }
 
-        pub fn merge_tail_if(&mut self, p: impl FnOnce(&BasicBlock) -> bool) -> bool {
+        pub fn merge_tail_if(&mut self, p: impl FnOnce(&BasicBlock<'b>) -> bool) -> bool {
             self.as_mut().merge_tail_if(p)
         }
     }
@@ -379,19 +386,19 @@ mod graph {
     }
 
     /// enum that represents the **out goining** edges from the node.
-    pub enum NeighbouringNodes<'a> {
+    pub enum NeighbouringNodes<'b> {
         Unconditional {
-            next: Node<'a>,
+            next: Node<'b>,
         },
         Conditional {
             cond: Reg,
-            yes: Node<'a>,
-            no: Node<'a>,
+            yes: Node<'b>,
+            no: Node<'b>,
         },
     }
 
-    impl<'a> Node<'a> {
-        fn terminator(&self) -> Option<&Terminator> {
+    impl<'b> Node<'b> {
+        fn terminator(&self) -> Option<&Terminator<'b>> {
             self.as_ref().terminator()
         }
 
@@ -399,7 +406,7 @@ mod graph {
             self.terminator().is_none()
         }
 
-        pub fn neighbours(&self) -> Option<NeighbouringNodes<'a>> {
+        pub fn neighbours(&self) -> Option<NeighbouringNodes<'b>> {
             match self.as_ref().terminator() {
                 None => None,
                 Some(&Terminator::Tail { block, .. }) => Some(NeighbouringNodes::Unconditional {
@@ -431,53 +438,53 @@ mod graph {
         }
     }
 
-    enum DfsNode {
-        Recurse(NonNull<BasicBlock>),
-        Shallow(NonNull<BasicBlock>),
+    enum DfsNode<'a> {
+        Recurse(NonNull<BasicBlock<'a>>),
+        Shallow(NonNull<BasicBlock<'a>>),
     }
 
-    pub struct Dfs<'a> {
-        visited: HashSet<NonNull<BasicBlock>>,
-        stack: Vec<DfsNode>,
-        _marker: Marker<&'a BasicBlock>,
+    pub struct Dfs<'b> {
+        visited: HashSet<NonNull<BasicBlock<'b>>>,
+        stack: Vec<DfsNode<'b>>,
+        _marker: Marker<&'b BasicBlock<'b>>,
     }
 
-    pub struct DfsMut<'a> {
-        visited: HashSet<NonNull<BasicBlock>>,
-        stack: Vec<DfsNode>,
-        _marker: Marker<&'a mut BasicBlock>,
+    pub struct DfsMut<'b> {
+        visited: HashSet<NonNull<BasicBlock<'b>>>,
+        stack: Vec<DfsNode<'b>>,
+        _marker: Marker<&'b mut BasicBlock<'b>>,
     }
 
-    pub struct PsudoInOrder<'a> {
-        stack: Vec<NonNull<BasicBlock>>,
+    pub struct PsudoInOrder<'b> {
+        stack: Vec<NonNull<BasicBlock<'b>>>,
         /// we have to keep the visited node because there are cycles in a typical cfg.
-        visited: HashSet<NonNull<BasicBlock>>,
-        _marker: Marker<&'a BasicBlock>,
+        visited: HashSet<NonNull<BasicBlock<'b>>>,
+        _marker: Marker<&'b BasicBlock<'b>>,
     }
 
     #[derive(Debug)]
-    struct BfsBookKeeper {
-        visited: HashSet<NonNull<BasicBlock>>,
-        queue: VecDeque<NonNull<BasicBlock>>,
+    struct BfsBookKeeper<'b> {
+        visited: HashSet<NonNull<BasicBlock<'b>>>,
+        queue: VecDeque<NonNull<BasicBlock<'b>>>,
     }
 
     /// a bfs iterator that allows mutating nodes. the nodes can mutate two things the instructions
     /// list of a block and the outgoing edges in the current `BfsMutNode`.
-    pub struct BfsMut<'a> {
-        book_keeper: BfsBookKeeper,
-        _marker: Marker<&'a mut BasicBlock>,
+    pub struct BfsMut<'b> {
+        book_keeper: BfsBookKeeper<'b>,
+        _marker: Marker<&'b mut BasicBlock<'b>>,
     }
 
-    impl BfsBookKeeper {
+    impl<'b> BfsBookKeeper<'b> {
         /// conditionally adds a node to the queue
-        fn enqueue(&mut self, node: NonNull<BasicBlock>) {
+        fn enqueue(&mut self, node: NonNull<BasicBlock<'b>>) {
             if self.visited.insert(node) {
                 self.queue.push_back(node);
             }
         }
 
         /// returns the next node to be visited (if it exists).
-        fn dequeue(&mut self) -> Option<NonNull<BasicBlock>> {
+        fn dequeue(&mut self) -> Option<NonNull<BasicBlock<'b>>> {
             self.queue.pop_front()
         }
 
@@ -487,9 +494,9 @@ mod graph {
         }
     }
 
-    impl BfsMut<'_> {
+    impl<'b> BfsMut<'b> {
         #[allow(clippy::should_implement_trait)]
-        pub fn next(&mut self) -> Option<BfsMutNode<'_>> {
+        pub fn next<'s>(&'s mut self) -> Option<BfsMutNode<'s, 'b>> {
             if let Some(top) = self.book_keeper.dequeue() {
                 Some(BfsMutNode {
                     node: NodeMut {
@@ -506,9 +513,9 @@ mod graph {
         }
     }
 
-    impl DfsMut<'_> {
+    impl<'b> DfsMut<'b> {
         #[allow(clippy::should_implement_trait)]
-        pub fn next(&mut self) -> Option<NodeMut> {
+        pub fn next(&mut self) -> Option<NodeMut<'b>> {
             if let Some(top) = self.stack.pop() {
                 match top {
                     DfsNode::Shallow(node) => Some(NodeMut {
@@ -548,26 +555,26 @@ mod graph {
         }
     }
 
-    pub struct BfsMutNode<'a> {
+    pub struct BfsMutNode<'k, 'b> {
         /// a refrence to the bfs iterator so that we can update the queue when the node is getting
         /// destructed.
-        book_keeper: &'a mut BfsBookKeeper,
-        node: NodeMut<'a>,
+        book_keeper: &'k mut BfsBookKeeper<'b>,
+        node: NodeMut<'b>,
     }
 
-    impl<'a> AsRef<NodeMut<'a>> for BfsMutNode<'a> {
-        fn as_ref(&self) -> &NodeMut<'a> {
+    impl<'b> AsRef<NodeMut<'b>> for BfsMutNode<'_, 'b> {
+        fn as_ref(&self) -> &NodeMut<'b> {
             &self.node
         }
     }
 
-    impl<'a> AsMut<NodeMut<'a>> for BfsMutNode<'a> {
-        fn as_mut(&mut self) -> &mut NodeMut<'a> {
+    impl<'b> AsMut<NodeMut<'b>> for BfsMutNode<'_, 'b> {
+        fn as_mut(&mut self) -> &mut NodeMut<'b> {
             &mut self.node
         }
     }
 
-    impl<'a> Drop for BfsMutNode<'a> {
+    impl<'b> Drop for BfsMutNode<'_, 'b> {
         fn drop(&mut self) {
             match self.as_ref().terminator() {
                 None => {}
@@ -582,8 +589,8 @@ mod graph {
         }
     }
 
-    impl<'a> Dfs<'a> {
-        fn new(root: &'a BasicBlock) -> Self {
+    impl<'b> Dfs<'b> {
+        fn new(root: &BasicBlock<'b>) -> Self {
             Self {
                 visited: HashSet::from([NonNull::new(root as *const _ as *mut _).unwrap()]),
                 stack: vec![DfsNode::Recurse(
@@ -594,8 +601,8 @@ mod graph {
         }
     }
 
-    impl<'a> Iterator for Dfs<'a> {
-        type Item = Node<'a>;
+    impl<'b> Iterator for Dfs<'b> {
+        type Item = Node<'b>;
         fn next(&mut self) -> Option<Self::Item> {
             if let Some(top) = self.stack.pop() {
                 match top {
@@ -637,8 +644,8 @@ mod graph {
         }
     }
 
-    impl<'a> Iterator for PsudoInOrder<'a> {
-        type Item = Node<'a>;
+    impl<'b> Iterator for PsudoInOrder<'b> {
+        type Item = Node<'b>;
         fn next(&mut self) -> Option<Self::Item> {
             if let Some(node) = self.stack.pop() {
                 self.visited.insert(node);
@@ -671,8 +678,8 @@ mod graph {
         }
     }
 
-    impl Graph {
-        pub fn new(root: NonNull<BasicBlock>) -> Self {
+    impl<'b> Graph<'b> {
+        pub fn new(root: NonNull<BasicBlock<'b>>) -> Self {
             let mut graph = Self {
                 root,
                 _marker: Marker,
@@ -686,19 +693,19 @@ mod graph {
             graph
         }
 
-        pub fn root(&self) -> &BasicBlock {
+        pub fn root(&self) -> &BasicBlock<'b> {
             unsafe { self.root.as_ref() }
         }
 
-        pub fn root_mut(&mut self) -> &mut BasicBlock {
+        pub fn root_mut(&mut self) -> &mut BasicBlock<'b> {
             unsafe { self.root.as_mut() }
         }
 
-        pub fn dfs(&self) -> Dfs<'_> {
+        pub fn dfs(&self) -> Dfs<'b> {
             Dfs::new(self.root())
         }
 
-        pub fn dfs_mut(&mut self) -> DfsMut<'_> {
+        pub fn dfs_mut(&mut self) -> DfsMut<'b> {
             DfsMut {
                 visited: HashSet::from([self.root]),
                 stack: vec![DfsNode::Recurse(self.root)],
@@ -706,7 +713,7 @@ mod graph {
             }
         }
 
-        pub fn psudo_inorder(&self) -> PsudoInOrder<'_> {
+        pub fn psudo_inorder(&self) -> PsudoInOrder<'b> {
             PsudoInOrder {
                 stack: vec![self.root],
                 visited: HashSet::default(),
@@ -714,7 +721,7 @@ mod graph {
             }
         }
 
-        pub fn bfs_mut(&mut self) -> BfsMut {
+        pub fn bfs_mut(&mut self) -> BfsMut<'b> {
             let book_keeper = BfsBookKeeper {
                 visited: HashSet::from([self.root]),
                 queue: VecDeque::from([self.root]),
@@ -726,41 +733,43 @@ mod graph {
         }
     }
 
-    pub struct Function {
-        graph: Graph,
+    pub struct Function<'b> {
+        graph: Graph<'b>,
         name: String,
-        allocated_regs: usize,
-        args: Vec<String>,
+        /// a vector that owns the named variables (currently only shortcircut variables that do
+        /// not live in the original source code).
+        allocated_regs: u32,
+        args: Vec<Symbol<'b>>,
     }
 
-    impl AsRef<Graph> for Function {
-        fn as_ref(&self) -> &Graph {
+    impl<'b> AsRef<Graph<'b>> for Function<'b> {
+        fn as_ref(&self) -> &Graph<'b> {
             self.graph()
         }
     }
 
-    impl AsMut<Graph> for Function {
-        fn as_mut(&mut self) -> &mut Graph {
+    impl<'b> AsMut<Graph<'b>> for Function<'b> {
+        fn as_mut(&mut self) -> &mut Graph<'b> {
             self.graph_mut()
         }
     }
 
-    impl Function {
+    impl<'b> Function<'b> {
         pub fn new(
             name: impl ToString,
-            graph: Graph,
-            allocated_regs: usize,
-            args: Vec<String>,
+            graph: Graph<'b>,
+            allocated_regs: u32,
+            args: impl IntoIterator<Item = Symbol<'b>>,
         ) -> Self {
             Self {
                 name: name.to_string(),
-                args,
+                args: args.into_iter().collect(),
                 allocated_regs,
                 graph,
             }
         }
 
-        pub fn allocated_regs(&self) -> usize {
+        pub fn allocated_regs(&self) -> u32 {
             self.allocated_regs
         }
 
@@ -778,31 +787,31 @@ mod graph {
             self.name.as_str()
         }
 
-        pub fn graph(&self) -> &Graph {
+        pub fn graph(&self) -> &Graph<'b> {
             &self.graph
         }
 
-        pub fn graph_mut(&mut self) -> &mut Graph {
+        pub fn graph_mut(&mut self) -> &mut Graph<'b> {
             &mut self.graph
         }
     }
 
-    pub struct Program {
-        pub(super) functions: Vec<Function>,
-        pub(super) globals: Vec<(String, usize)>,
+    pub struct Program<'b> {
+        pub(super) functions: Vec<Function<'b>>,
+        pub(super) globals: Vec<(Symbol<'b>, usize)>,
     }
 
-    impl Program {
-        pub fn functions(&self) -> &[Function] {
+    impl<'b> Program<'b> {
+        pub fn functions(&self) -> &[Function<'b>] {
             &self.functions
         }
 
-        pub fn globals(&self) -> &[(String, usize)] {
+        pub fn globals(&self) -> &[(Symbol<'b>, usize)] {
             &self.globals
         }
 
-        pub fn new<F: Into<Function>>(
-            globals: impl IntoIterator<Item = (String, usize)>,
+        pub fn new<F: Into<Function<'b>>>(
+            globals: impl IntoIterator<Item = (Symbol<'b>, usize)>,
             functions: impl IntoIterator<Item = F>,
         ) -> Self {
             Self {
@@ -817,48 +826,48 @@ mod ccfg {
     use crate::ir::{BBMetaData, BBType::*, BasicBlock, Graph, Reg};
     use std::{marker::PhantomData as Marker, ptr::NonNull};
 
-    pub struct CCfg<'a> {
-        beg: NonNull<BasicBlock>,
-        end: Option<NonNull<BasicBlock>>,
-        _marker: Marker<&'a BasicBlock>,
+    pub struct CCfg<'b> {
+        beg: NonNull<BasicBlock<'b>>,
+        end: Option<NonNull<BasicBlock<'b>>>,
+        _marker: Marker<&'b BasicBlock<'b>>,
     }
 
-    pub struct LoopExit<'a> {
-        r#continue: CCfg<'a>,
-        r#break: CCfg<'a>,
+    pub struct LoopExit<'b> {
+        r#continue: CCfg<'b>,
+        r#break: CCfg<'b>,
         cond: Reg,
     }
 
-    pub struct Continue<'a>(NonNull<BasicBlock>, &'a LoopExit<'a>);
-    pub struct Break<'a>(NonNull<BasicBlock>, &'a LoopExit<'a>);
+    pub struct Continue<'b>(NonNull<BasicBlock<'b>>);
+    pub struct Break<'b>(NonNull<BasicBlock<'b>>);
 
-    impl<'a> LoopExit<'a> {
-        pub fn r#continue(&'a self) -> Continue<'a> {
-            Continue(self.r#continue.beg, self)
+    impl<'b> LoopExit<'b> {
+        pub fn r#continue(&self) -> Continue<'b> {
+            Continue(self.r#continue.beg)
         }
 
-        pub fn r#break(&'a self) -> Break<'a> {
-            Break(self.r#break.beg, self)
+        pub fn r#break(&self) -> Break<'b> {
+            Break(self.r#break.beg)
         }
 
-        pub fn new(r#continue: CCfg<'a>, cond: Reg) -> Self {
-            Self {
+        pub fn new(r#continue: CCfg<'b>, cond: Reg) -> LoopExit<'b> {
+            LoopExit {
                 r#continue,
                 r#break: CCfg::new_empty(),
                 cond,
             }
         }
 
-        pub fn build(mut self, mut body: CCfg<'a>) -> CCfg<'a> {
+        pub fn build(mut self, mut body: CCfg<'b>) -> CCfg<'b> {
             body.try_append_continue(self.r#continue());
             self.r#continue.append_cond(self.cond, body, self.r#break);
             self.r#continue
         }
     }
 
-    impl<'a> CCfg<'a> {
+    impl<'b> CCfg<'b> {
         /// constructs a new CCfg from beg. panics if `beg` has a terminator.
-        pub fn new(beg: Box<BasicBlock>) -> Self {
+        pub fn new(beg: Box<BasicBlock<'b>>) -> Self {
             let beg = NonNull::new(Box::into_raw(beg)).unwrap();
             Self {
                 beg,
@@ -875,7 +884,7 @@ mod ccfg {
             self.end.is_some()
         }
 
-        pub fn build_graph(self) -> Graph {
+        pub fn build_graph(self) -> Graph<'b> {
             let mut graph = Graph::new(self.beg);
             graph.shrink();
             graph
@@ -931,14 +940,14 @@ mod ccfg {
             }
         }
 
-        pub fn append_continue(&mut self, r#continue: Continue) {
+        pub fn append_continue(&mut self, r#continue: Continue<'b>) {
             unsafe {
                 (*self.end.unwrap().as_ptr()).link_unconditional(r#continue.0);
                 self.end = None
             }
         }
 
-        pub fn try_append_continue(&mut self, r#continue: Continue) -> bool {
+        pub fn try_append_continue(&mut self, r#continue: Continue<'b>) -> bool {
             if let Some(end) = self.end {
                 unsafe {
                     (*end.as_ptr()).link_unconditional(r#continue.0);
@@ -950,7 +959,7 @@ mod ccfg {
             }
         }
 
-        pub fn append_break(&mut self, r#break: Break) {
+        pub fn append_break(&mut self, r#break: Break<'b>) {
             unsafe {
                 (*self.end.unwrap().as_ptr()).link_unconditional(r#break.0);
                 self.end = None
@@ -960,113 +969,131 @@ mod ccfg {
 }
 
 mod destruct {
-    use std::{
-        collections::{hash_map::RandomState, HashSet},
-        hash::BuildHasher,
-    };
+    use std::cell::UnsafeCell;
+    use std::collections::HashSet;
 
     use super::{ccfg::*, IRExternArg, Program};
     use crate::{
         hir::*,
-        ir::{BBMetaData, BasicBlock, Function, Immediate, Instruction, Reg, RegAllocator},
-        span::Span,
+        ir::{BBMetaData, BasicBlock, Function, Immediate, Instruction, Reg, RegAllocator, Symbol},
     };
 
-    struct NameMangler<'a> {
-        id: RandomState,
-        names: HashSet<Span<'a>>,
-        parent: Option<&'a Self>,
-        mangle: bool,
+    /// A struct that is used to generate unique names for variables. This struct is unsafe +
+    /// unsound. although it is wrapped in a safe wrapper for simplicity. so this should never be
+    /// exposed to public.
+    struct NameMangler<'p, 'b> {
+        /// The id used to generate unique names for each variable. This id starts from 1. zero is
+        /// reserved for global variables.
+        id: u16,
+        /// The set of names that live in the scope of the mangler.
+        names: HashSet<&'b str>,
+        /// A refrence to the parent mangler (scope).
+        /// NOTE: this is not a const refrence since we use internal mutability. We actually update
+        /// the next field of the parent before we drop the mangler.
+        parent: Option<&'p Self>,
+        /// A pointer to the next id. This is used to generate unique names for each variable.
+        next: UnsafeCell<u16>,
     }
 
-    impl<'a> NameMangler<'a> {
-        fn new(parent: Option<&'a Self>, names: impl IntoIterator<Item = Span<'a>>) -> Self {
-            Self {
-                id: RandomState::new(),
-                names: names.into_iter().collect(),
-                parent,
-                mangle: true,
-            }
-        }
-
-        pub fn new_unmangled(
-            parent: Option<&'a Self>,
-            names: impl IntoIterator<Item = Span<'a>>,
-        ) -> Self {
-            Self {
-                id: RandomState::new(),
-                names: names.into_iter().collect(),
-                parent,
-                mangle: false,
-            }
-        }
-
-        fn mangle(&self, name: Span<'a>) -> String {
-            if self.names.contains(&name) {
-                if self.mangle {
-                    format!(
-                        "_{name}_{hash:x}",
-                        name = name.to_string(),
-                        hash = self.id.hash_one(name.as_bytes())
-                    )
-                } else {
-                    name.to_string()
+    impl<'p, 'b> Drop for NameMangler<'p, 'b> {
+        fn drop(&mut self) {
+            if let Some(parent) = self.parent.as_mut() {
+                unsafe {
+                    *parent.next.get() = *self.next.get();
                 }
+            }
+        }
+    }
+
+    impl<'p, 'b> NameMangler<'p, 'b> {
+        /// starts a new nested mangler (scope). This method is unsafe and there can be atmost one
+        /// nested mangler at a time.
+        fn nest<'s>(&'s self, names: impl IntoIterator<Item = &'b str>) -> NameMangler<'s, 'b>
+        where
+            's: 'p,
+        {
+            // NOTE: we do not update the next field in the parent ( we update it in the drop
+            // function ).
+            unsafe {
+                let next = *self.next.get() + 1;
+                Self {
+                    id: *self.next.get(),
+                    names: names.into_iter().collect(),
+                    parent: Some(self),
+                    next: UnsafeCell::new(next),
+                }
+            }
+        }
+
+        pub fn new(names: impl IntoIterator<Item = &'b str>) -> Self {
+            Self {
+                // id 0 is reserved for global variables
+                id: 1,
+                names: names.into_iter().collect(),
+                parent: None,
+                next: 2.into(),
+            }
+        }
+
+        fn mangle(&self, name: &'b str) -> Symbol<'b> {
+            if self.names.contains(name) {
+                Symbol(name, self.id)
             } else {
                 self.parent
+                    .as_ref()
                     .map(|par| par.mangle(name))
                     // if it does not exist then it is a global variable
-                    .unwrap_or(name.to_string())
+                    .unwrap_or(Symbol(name, 0))
             }
         }
     }
 
-    impl<'a> HIRExpr<'a> {
-        fn destruct<'b>(
+    impl<'b> HIRExpr<'b> {
+        fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'a>,
+            mangler: &NameMangler<'_, 'b>,
         ) -> (CCfg<'b>, Reg) {
             use HIRExpr::*;
             match self {
                 HIRExpr::Literal(lit) => {
-                    let res = reg_allocator.alloc();
-                    let bb = BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_load_imm(res, *lit)],
-                    );
+                    let res = reg_allocator.alloc_ssa();
+                    let bb =
+                        BasicBlock::new(BBMetaData::new(None), &[Instruction::new_load(res, *lit)]);
                     (CCfg::new(Box::from(bb)), res)
                 }
 
                 HIRExpr::Len(size) => {
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     (
                         CCfg::new(Box::new(BasicBlock::new(
                             BBMetaData::new(None),
-                            &[Instruction::new_load_imm(res, Immediate::Int(*size as i64))],
+                            &[Instruction::new_load(res, Immediate::Int(*size as i64))],
                         ))),
                         res,
                     )
                 }
                 HIRExpr::Loc(loc) => match loc.as_ref() {
                     HIRLoc::Scalar(sym) => {
-                        let res = reg_allocator.alloc();
+                        let res = reg_allocator.alloc_ssa();
                         let bb = BasicBlock::new(
                             BBMetaData::new(None),
-                            &[Instruction::new_load(res, mangler.mangle(sym.into_val()))],
+                            &[Instruction::new_load(
+                                res,
+                                mangler.mangle(sym.into_val().as_str()),
+                            )],
                         );
                         (CCfg::new(Box::new(bb)), res)
                     }
-                    HIRLoc::Index { arr, size, index } => {
+                    HIRLoc::Index { arr, index, .. } => {
                         let (mut index_ccfg, index) = index.destruct(reg_allocator, mangler);
-                        let res = reg_allocator.alloc();
+                        let res = reg_allocator.alloc_ssa();
                         index_ccfg.append(CCfg::new(Box::new(BasicBlock::new(
                             BBMetaData::new(None),
                             &[Instruction::new_load_offset(
                                 res,
-                                mangler.mangle(arr.into_val()),
+                                mangler.mangle(arr.into_val().as_str()),
                                 index,
-                                *size,
                             )],
                         ))));
                         (index_ccfg, res)
@@ -1075,7 +1102,7 @@ mod destruct {
                 HIRExpr::Arith { op, lhs, rhs } => {
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
                     let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_arith(res, lhs, *op, rhs)],
@@ -1087,7 +1114,7 @@ mod destruct {
                 HIRExpr::Rel { op, lhs, rhs } => {
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
                     let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_rel(res, lhs, *op, rhs)],
@@ -1098,7 +1125,7 @@ mod destruct {
                 Eq { op, lhs, rhs } => {
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
                     let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_eq(res, lhs, *op, rhs)],
@@ -1108,7 +1135,7 @@ mod destruct {
                 }
                 Neg(e) => {
                     let (mut ccfg, res_neg) = e.destruct(reg_allocator, mangler);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let bb = BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_neg(res, res_neg)],
@@ -1118,7 +1145,7 @@ mod destruct {
                 }
                 Not(e) => {
                     let (mut ccfg, res_not) = e.destruct(reg_allocator, mangler);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let bb = BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_not(res, res_not)],
@@ -1130,7 +1157,7 @@ mod destruct {
                     let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler);
                     let (ccfg_no, no) = no.destruct(reg_allocator, mangler);
                     let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let select = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_select(res, cond, yes, no)],
@@ -1144,28 +1171,27 @@ mod destruct {
                     rhs,
                     op: CondOp::Or,
                 } => {
-                    let mut scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
-                    let sc = format!("__sc{:?}", scbb.as_ref() as *const _);
-                    scbb.push(Instruction::AllocScalar { name: sc.clone() });
+                    let scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
+                    let sc = reg_allocator.alloc_sc();
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
                     let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
                     let set_true = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store(sc.clone(), true)],
+                        &[Instruction::new_store(sc, true)],
                     )));
                     let set_false = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store(sc.clone(), false)],
+                        &[Instruction::new_store(sc, false)],
                     )));
                     ccfg_rhs.append_cond(rhs, set_true, set_false);
                     let set_true = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store(sc.clone(), true)],
+                        &[Instruction::new_store(sc, true)],
                     )));
                     ccfg_lhs.append_cond(lhs, set_true, ccfg_rhs);
                     let mut beg = CCfg::new(scbb);
                     beg.append(ccfg_lhs);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let load = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_load(res, sc)],
@@ -1178,28 +1204,27 @@ mod destruct {
                     lhs,
                     rhs,
                 } => {
-                    let mut scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
-                    let sc = format!("__sc{:?}", scbb.as_ref() as *const _);
-                    scbb.push(Instruction::AllocScalar { name: sc.clone() });
+                    let scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
+                    let sc = reg_allocator.alloc_sc();
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
                     let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
                     let set_false = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store(sc.clone(), false)],
+                        &[Instruction::new_store(sc, false)],
                     )));
                     let set_true = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store(sc.clone(), true)],
+                        &[Instruction::new_store(sc, true)],
                     )));
                     ccfg_rhs.append_cond(rhs, set_true, set_false);
                     let set_false = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_store(sc.clone(), false)],
+                        &[Instruction::new_store(sc, false)],
                     )));
                     ccfg_lhs.append_cond(lhs, ccfg_rhs, set_false);
                     let mut beg = CCfg::new(scbb);
                     beg.append(ccfg_lhs);
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let load = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_load(res, sc)],
@@ -1211,11 +1236,11 @@ mod destruct {
         }
     }
 
-    impl<'a> HIRCall<'a> {
-        fn destruct_ret<'b>(
+    impl<'b> HIRCall<'b> {
+        fn destruct_ret(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'a>,
+            mangler: &NameMangler<'_, 'b>,
         ) -> (CCfg<'b>, Reg) {
             match self {
                 HIRCall::Decaf { name, args, .. } => {
@@ -1230,7 +1255,7 @@ mod destruct {
                                 (ccfg, args)
                             },
                         );
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let call = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_ret_call(res, *name, args)],
@@ -1252,11 +1277,11 @@ mod destruct {
                                 ccfg.append(ccfg_arg);
                                 IRExternArg::Source(arg.into())
                             })
-                            .map_err(|slice| IRExternArg::String(slice.to_string()))
+                            .map_err(IRExternArg::String)
                             .unwrap_or_else(|e| e)
                         })
                         .collect();
-                    let res = reg_allocator.alloc();
+                    let res = reg_allocator.alloc_ssa();
                     let call = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_extern_call(res, *name, args)],
@@ -1268,11 +1293,11 @@ mod destruct {
         }
     }
 
-    impl<'a> HIRStmt<'a> {
-        fn destruct<'b>(
-            &'a self,
+    impl<'b> HIRStmt<'b> {
+        fn destruct(
+            &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'a>,
+            mangler: &NameMangler<'_, 'b>,
             loop_exit: Option<&LoopExit<'b>>,
         ) -> CCfg<'b> {
             use HIRStmt::*;
@@ -1339,30 +1364,30 @@ mod destruct {
         }
     }
 
-    impl<'a> HIRAssign<'a> {
-        fn destruct<'b>(
+    impl<'b> HIRAssign<'b> {
+        fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler,
+            mangler: &NameMangler<'_, 'b>,
         ) -> CCfg<'b> {
             let (mut ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler);
             match &self.lhs {
-                HIRLoc::Index { arr, size, index } => {
+                HIRLoc::Index { arr, index, .. } => {
                     let (index_ccfg, index) = index.destruct(reg_allocator, mangler);
                     let store = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_store_offset(
-                            mangler.mangle(arr.into_val()),
+                            mangler.mangle(arr.into_val().as_str()),
                             index,
                             rhs,
-                            *size,
                         )],
                     )));
                     ccfg.append(index_ccfg).append(store);
                     ccfg
                 }
                 HIRLoc::Scalar(sym) => {
-                    let store = Instruction::new_store(mangler.mangle(sym.into_val()), rhs);
+                    let store =
+                        Instruction::new_store(mangler.mangle(sym.into_val().as_str()), rhs);
                     ccfg.append(CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[store],
@@ -1373,25 +1398,25 @@ mod destruct {
         }
     }
 
-    impl<'a> HIRBlock<'a> {
-        fn destruct<'b>(
+    impl<'b> HIRBlock<'b> {
+        fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'a>,
+            mangler: &NameMangler<'_, 'b>,
             loop_exit: Option<&LoopExit<'b>>,
         ) -> CCfg<'b> {
-            let mangler = NameMangler::new(Some(mangler), self.decls.keys().copied());
+            let mangler = mangler.nest(self.decls().keys().map(|span| span.as_str()));
             let stack_allocs = self
                 .decls()
                 .values()
                 .map(|decl| {
                     if decl.is_scalar() {
                         Instruction::AllocScalar {
-                            name: mangler.mangle(decl.name()),
+                            name: mangler.mangle(decl.name().as_str()),
                         }
                     } else {
                         Instruction::AllocArray {
-                            name: mangler.mangle(decl.name()),
+                            name: mangler.mangle(decl.name().as_str()),
                             size: decl.array_len().unwrap(),
                         }
                     }
@@ -1414,29 +1439,22 @@ mod destruct {
 
     impl<'a> HIRFunction<'a> {
         pub fn destruct(&self) -> Function {
-            let mangler = NameMangler::new_unmangled(None, self.args_sorted.iter().copied());
-            // let stack_allocs = self
-            //     .args
-            //     .values()
-            //     .map(|decl| {
-            //         if decl.is_scalar() {
-            //             Instruction::AllocScalar {
-            //                 name: mangler.mangle(decl.name()),
-            //             }
-            //         } else {
-            //             Instruction::AllocArray {
-            //                 name: mangler.mangle(decl.name()),
-            //                 size: decl.array_len().unwrap(),
-            //             }
-            //         }
-            //     })
-            //     .collect::<Vec<_>>();
+            let mangler = NameMangler::new(self.args_sorted.iter().map(|name| name.as_str()));
             let empty = vec![];
             let mut ccfg = CCfg::new(Box::new(BasicBlock::new(BBMetaData::default(), &empty)));
             let mut reg_allocator = RegAllocator::new();
             let body = self.body.destruct(&mut reg_allocator, &mangler, None);
             ccfg.append(body);
             let mut graph = ccfg.build_graph();
+            // let return_guard_msg = format!(
+            //     r#""*** RUNTIME ERROR ***: No return value from non-void method \"{name}\"\n""#,
+            //     name = self.name.as_str()
+            // );
+            // Instruction::ExternCall {
+            //     dest: reg_allocator.alloc().into(),
+            //     symbol: "printf".to_string(),
+            //     args: vec![IRExternArg::String(&return_guard_msg)],
+            // };
 
             // put return guards on the leafs.
             if self.ret.is_some() {
@@ -1463,7 +1481,9 @@ mod destruct {
                 self.name,
                 graph,
                 reg_allocator.allocated(),
-                self.args_sorted.iter().map(|arg| arg.to_string()).collect(),
+                self.args_sorted
+                    .iter()
+                    .map(|arg| mangler.mangle(arg.as_str())),
             )
         }
     }
@@ -1472,8 +1492,10 @@ mod destruct {
         pub fn destruct(&self) -> Program {
             Program::new(
                 self.globals.values().map(|var| match var {
-                    HIRVar::Scalar(name) => (name.into_val().to_string(), 8),
-                    HIRVar::Array { arr, size, .. } => (arr.val().to_string(), 8 * *size as usize),
+                    HIRVar::Scalar(name) => (Symbol(name.into_val().as_str(), 0), 8),
+                    HIRVar::Array { arr, size, .. } => {
+                        (Symbol(arr.into_val().as_str(), 0), 8 * *size as usize)
+                    }
                 }),
                 self.functions.values().map(|func| func.destruct()),
             )
@@ -1560,7 +1582,7 @@ mod dot {
         }
     }
 
-    impl Graph {
+    impl Graph<'_> {
         /// converts the graph to a dot graph.
         pub fn to_dot<T: Display>(&self, name: Option<T>) -> Dot {
             let graph_body = self
@@ -1595,7 +1617,7 @@ mod dot {
 mod simplify {
     use crate::ir::Graph;
 
-    impl Graph {
+    impl Graph<'_> {
         /// removes any unnecessary nodes from the graph.
         pub fn shrink(&mut self) {
             let mut bfs = self.bfs_mut();
@@ -1605,60 +1627,5 @@ mod simplify {
                 while node.as_mut().merge_tail_if(|tail| tail.incoming_len() == 1) {}
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::hir::*;
-    use crate::lexer::*;
-    use crate::parser::*;
-    use crate::span::*;
-
-    #[test]
-    fn empty_main() {
-        let code = SpanSource::new(br#"void main() { return ; }"#);
-        let mut parser = Parser::new(
-            tokens(code.source()).map(|s| s.map(|t| t.unwrap())),
-            |_| unreachable!(),
-        );
-        let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot).unwrap();
-
-        let _graph = hirtree.functions.values().next().unwrap().destruct();
-    }
-
-    #[test]
-    fn add() {
-        let code = SpanSource::new(
-            br#"void main() { return ; } int add(int a, int b) { int c; c = a + b; return c; }"#,
-        );
-        let mut parser = Parser::new(
-            tokens(code.source()).map(|s| s.map(|t| t.unwrap())),
-            |_| unreachable!(),
-        );
-        let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot).unwrap();
-
-        hirtree.functions.values().for_each(|func| {
-            func.destruct();
-        });
-    }
-
-    #[test]
-    fn some_test_that_fails() {
-        let code = SpanSource::new(include_bytes!(
-            "../../decaf-tests/codegen/input/04-math2.dcf"
-        ));
-        let mut parser = Parser::new(
-            tokens(code.source()).map(|s| s.map(|t| t.unwrap())),
-            |_| unreachable!(),
-        );
-        let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot).unwrap();
-
-        hirtree.functions.values().for_each(|func| {
-            func.destruct();
-        });
     }
 }

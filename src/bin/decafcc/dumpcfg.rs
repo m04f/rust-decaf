@@ -22,7 +22,7 @@ impl App for DumpCFG {
                 ewrite(stderr, &input_file, e).unwrap();
             });
         let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot);
+        let hirtree = HIRRoot::from_proot(proot, false);
         match hirtree {
             Ok(tree) => {
                 let out_dir = PathBuf::from("/tmp/decafcc/cfg-dump").join(input_file);

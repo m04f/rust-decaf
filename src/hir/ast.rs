@@ -455,14 +455,14 @@ impl<'a> FunctionSig<'a> {
 
 #[derive(Debug, Clone)]
 pub enum ExternArg<'a> {
-    String(Span<'a>),
+    String(&'a str),
     Array(Span<'a>),
     Expr(HIRExpr<'a>),
 }
 
 impl<'a> From<PString<'a>> for ExternArg<'a> {
     fn from(value: PString<'a>) -> Self {
-        Self::String(value.span())
+        Self::String(value.span().as_str())
     }
 }
 

@@ -181,6 +181,12 @@ impl ToString for Span<'_> {
     }
 }
 
+impl AsRef<str> for Span<'_> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl<'a> Span<'a> {
     pub fn position(&self) -> (usize, usize) {
         (self.line(), self.column())
@@ -192,6 +198,10 @@ impl<'a> Span<'a> {
 
     pub fn as_bytes(&self) -> &[u8] {
         self.source()
+    }
+
+    pub fn as_str(self) -> &'a str {
+        std::str::from_utf8(self.source).unwrap()
     }
 
     pub fn bytes(&self) -> Copied<slice::Iter<u8>> {

@@ -1,6 +1,6 @@
 pub mod peephole {
     use crate::ir::Graph;
-    impl Graph {
+    impl Graph<'_> {
         /// perfonrs peephole optimization on the graph.
         pub fn peephole(&mut self) {
             // the ordering does not matter here anyways

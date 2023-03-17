@@ -18,7 +18,7 @@ impl App for Semantics {
                 ewrite(stderr, &input_file, e).unwrap();
             });
         let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot);
+        let hirtree = HIRRoot::from_proot(proot, true);
         match hirtree {
             Ok(_) => crate::ExitStatus::Success,
             Err(errs) => {

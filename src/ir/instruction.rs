@@ -4,7 +4,14 @@ use crate::{hir::*, parser, span::*};
 
 pub type Op = parser::ast::Op;
 
-pub type Symbol = String;
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct Symbol<'b>(pub(super) &'b str, pub(super) u16);
+
+impl Display for Symbol<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.0, self.1)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Immediate {
@@ -31,26 +38,46 @@ impl From<i64> for Immediate {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Source {
+#[derive(Debug, Clone, Copy)]
+pub enum Source<'b> {
     Immediate(Immediate),
-    Symbol(Symbol),
-    Offset(Symbol, Reg),
+    Symbol(Symbol<'b>),
+    Offset(Symbol<'b>, Reg),
     Reg(Reg),
+    Sc(Sc),
 }
 
-impl From<bool> for Source {
+impl From<Sc> for Source<'_> {
+    fn from(value: Sc) -> Self {
+        Self::Sc(value)
+    }
+}
+
+impl<'a> From<Symbol<'a>> for Source<'a> {
+    fn from(value: Symbol<'a>) -> Self {
+        Self::Symbol(value)
+    }
+}
+
+impl From<HIRLiteral> for Source<'_> {
+    fn from(value: HIRLiteral) -> Self {
+        Self::Immediate(value.into())
+    }
+}
+
+impl From<bool> for Source<'_> {
     fn from(value: bool) -> Self {
         Self::Immediate(Immediate::Bool(value))
     }
 }
 
-impl Source {
-    pub fn to_dist(&self) -> Option<Dest> {
-        match self {
-            Self::Reg(reg) => Some(Dest::Reg(*reg)),
-            Self::Symbol(s) => Some(Dest::Symbol(s.clone())),
-            Self::Offset(s, r) => Some(Dest::Offset(s.clone(), *r)),
+impl<'b> Source<'b> {
+    pub fn to_dist(&self) -> Option<Dest<'b>> {
+        match *self {
+            Self::Reg(reg) => Some(Dest::Reg(reg)),
+            Self::Symbol(s) => Some(Dest::Symbol(s)),
+            Self::Offset(s, r) => Some(Dest::Offset(s, r)),
+            Self::Sc(sc) => Some(Dest::Sc(sc)),
             Self::Immediate(_) => None,
         }
     }
@@ -63,20 +90,15 @@ impl Source {
     }
 }
 
-impl Display for Source {
+impl Display for Source<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Immediate(i) => write!(f, "{i}"),
             Self::Symbol(s) => write!(f, "%{s}"),
             Self::Offset(s, r) => write!(f, "%{s}[{r}]"),
+            Self::Sc(sc) => write!(f, "{sc}"),
             Self::Reg(r) => write!(f, "{r}"),
         }
-    }
-}
-
-impl From<Span<'_>> for Symbol {
-    fn from(value: Span<'_>) -> Self {
-        value.to_string()
     }
 }
 
@@ -89,52 +111,50 @@ impl From<HIRLiteral> for Immediate {
     }
 }
 
-impl From<Immediate> for Source {
+impl From<Immediate> for Source<'_> {
     fn from(value: Immediate) -> Self {
         Self::Immediate(value)
     }
 }
 
-impl From<Reg> for Source {
+impl From<Reg> for Source<'_> {
     fn from(value: Reg) -> Self {
         Self::Reg(value)
     }
 }
 
-impl From<Symbol> for Source {
-    fn from(value: Symbol) -> Self {
+#[derive(Debug, Clone, Copy)]
+pub enum Dest<'b> {
+    Symbol(Symbol<'b>),
+    Offset(Symbol<'b>, Reg),
+    Reg(Reg),
+    Sc(Sc),
+}
+
+impl From<Sc> for Dest<'_> {
+    fn from(value: Sc) -> Self {
+        Self::Sc(value)
+    }
+}
+
+impl<'a> From<Symbol<'a>> for Dest<'a> {
+    fn from(value: Symbol<'a>) -> Self {
         Self::Symbol(value)
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Dest {
-    Symbol(Symbol),
-    Offset(Symbol, Reg),
-    Reg(Reg),
-}
-
-impl Display for Dest {
+impl Display for Dest<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Symbol(s) => write!(f, "%{s}"),
             Self::Offset(s, r) => write!(f, "%{s}[{r}]"),
             Self::Reg(r) => write!(f, "{r}"),
+            Self::Sc(sc) => write!(f, "{sc}"),
         }
     }
 }
 
-impl Dest {
-    fn reg(self) -> Option<Reg> {
-        match self {
-            Self::Reg(reg) => Some(reg),
-            Self::Symbol(_) => None,
-            Self::Offset(_, _) => None,
-        }
-    }
-}
-
-impl From<Reg> for Dest {
+impl From<Reg> for Dest<'_> {
     fn from(value: Reg) -> Self {
         Self::Reg(value)
     }
@@ -147,11 +167,12 @@ pub enum Unary {
 }
 
 #[derive(Clone)]
-pub enum IRExternArg {
-    Source(Source),
-    String(String),
+pub enum IRExternArg<'b> {
+    Source(Source<'b>),
+    String(&'b str),
 }
-impl Debug for IRExternArg {
+
+impl Debug for IRExternArg<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Source(s) => write!(f, "{s}"),
@@ -162,35 +183,28 @@ impl Debug for IRExternArg {
 
 #[rustfmt::skip]
 #[derive(Clone)]
-pub enum Instruction {
-    AllocArray { name: String, size: u64 },
-    AllocScalar { name: String },
-    Op2 { dest: Dest, source1: Source, source2: Source, op: Op },
-    Unary { dest: Dest, source: Source, op: Unary },
-    Load { dest: Dest, source: Source },
-    Store { dest: Dest, source: Source },
-    Select { dest: Dest, cond: Source, yes: Source, no: Source },
+pub enum Instruction<'b> {
+    AllocArray { name: Symbol<'b>, size: u64 },
+    AllocScalar { name: Symbol<'b> },
+    Op2 { dest: Dest<'b>, lhs: Source<'b>, rhs: Source<'b>, op: Op },
+    Unary { dest: Dest<'b>, source: Source<'b>, op: Unary },
+    Move { dest: Dest<'b>, source: Source<'b> },
+    Select { dest: Dest<'b>, cond: Source<'b>, yes: Source<'b>, no: Source<'b> },
     ReturnGuard,
-    VoidCall { symbol: Symbol, args: Vec<Reg> },
-    Call { dest: Dest, symbol: Symbol, args: Vec<Reg> },
-    ExternCall { dest: Dest, symbol: Symbol, args: Vec<IRExternArg> },
-    Return { value: Source },
+    VoidCall { symbol: &'b str, args: Vec<Reg> },
+    Call { dest: Dest<'b>, symbol: &'b str, args: Vec<Reg> },
+    ExternCall { dest: Dest<'b>, symbol: &'b str, args: Vec<IRExternArg<'b>> },
+    Return { value: Source<'b> },
     VoidReturn,
 }
 
-impl Debug for Instruction {
+impl Debug for Instruction<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Op2 {
-                dest,
-                source1,
-                source2,
-                op,
-            } => write!(f, "{dest} = {op:?} {source1} {source2}"),
+            Self::Op2 { dest, lhs, rhs, op } => write!(f, "{dest} = {op:?} {lhs} {rhs}"),
             Self::AllocArray { name, size } => write!(f, "alloc {name}[{size}]"),
             Self::AllocScalar { name } => write!(f, "alloc {name}"),
-            Self::Load { dest, source } => write!(f, "{dest} = load {source}"),
-            Self::Store { dest, source } => write!(f, "store {dest} {source}"),
+            Self::Move { dest, source } => write!(f, "{dest} = {source}"),
             Self::Unary { dest, source, op } => write!(f, "{dest} = {op:?} {source}"),
             Self::Select {
                 dest,
@@ -210,43 +224,35 @@ impl Debug for Instruction {
     }
 }
 
-impl Instruction {
-    pub fn new_load(reg: Reg, symbol: impl Into<Symbol>) -> Self {
-        Self::Load {
+impl<'b> Instruction<'b> {
+    pub fn new_load(reg: Reg, symbol: impl Into<Source<'b>>) -> Self {
+        Self::Move {
             dest: reg.into(),
-            source: symbol.into().into(),
-        }
-    }
-    pub fn new_load_imm(reg: Reg, immediate: impl Into<Immediate>) -> Self {
-        Self::Load {
-            dest: reg.into(),
-            source: immediate.into().into(),
-        }
-    }
-    pub fn new_load_offset(reg: Reg, symbol: impl Into<Symbol>, offset: Reg, _bound: u64) -> Self {
-        Self::Load {
-            dest: reg.into(),
-            source: Source::Offset(symbol.into(), offset),
+            source: symbol.into(),
         }
     }
 
-    pub fn new_store(symbol: impl Into<Symbol>, source: impl Into<Source>) -> Self {
-        Self::Store {
-            dest: Dest::Symbol(symbol.into()),
+    pub fn new_load_offset(reg: Reg, symbol: Symbol<'b>, offset: Reg) -> Self {
+        Self::Move {
+            dest: reg.into(),
+            source: Source::Offset(symbol, offset),
+        }
+    }
+
+    pub fn new_store(symbol: impl Into<Dest<'b>>, source: impl Into<Source<'b>>) -> Self {
+        Self::Move {
+            dest: symbol.into(),
             source: source.into(),
         }
     }
-    pub fn new_store_offset(
-        symbol: impl Into<Symbol>,
-        offset: Reg,
-        source: Reg,
-        _bound: u64,
-    ) -> Self {
-        Self::Store {
-            dest: Dest::Offset(symbol.into(), offset),
+
+    pub fn new_store_offset(symbol: Symbol<'b>, offset: Reg, source: Reg) -> Self {
+        Self::Move {
+            dest: Dest::Offset(symbol, offset),
             source: source.into(),
         }
     }
+
     pub fn new_return(reg: Reg) -> Self {
         Self::Return { value: reg.into() }
     }
@@ -259,26 +265,26 @@ impl Instruction {
         }
     }
 
-    pub fn new_void_call(symbol: impl Into<Symbol>, args: Vec<Reg>) -> Self {
+    pub fn new_void_call(symbol: Span<'b>, args: Vec<Reg>) -> Self {
         Self::VoidCall {
-            symbol: symbol.into(),
+            symbol: symbol.as_str(),
             args,
         }
     }
     pub fn new_void_ret() -> Self {
         Self::VoidReturn
     }
-    pub fn new_ret_call(reg: Reg, symbol: impl Into<Symbol>, args: Vec<Reg>) -> Self {
+    pub fn new_ret_call(reg: Reg, symbol: Span<'b>, args: Vec<Reg>) -> Self {
         Self::Call {
             dest: reg.into(),
-            symbol: symbol.into(),
+            symbol: symbol.as_str(),
             args,
         }
     }
-    pub fn new_extern_call(reg: Reg, symbol: impl Into<Symbol>, args: Vec<IRExternArg>) -> Self {
+    pub fn new_extern_call(reg: Reg, symbol: Span<'b>, args: Vec<IRExternArg<'b>>) -> Self {
         Self::ExternCall {
             dest: reg.into(),
-            symbol: symbol.into(),
+            symbol: symbol.as_str(),
             args,
         }
     }
@@ -299,39 +305,63 @@ impl Instruction {
     pub fn new_arith(dest: Reg, lhs: Reg, op: ArithOp, rhs: Reg) -> Self {
         Self::Op2 {
             dest: dest.into(),
-            source1: lhs.into(),
-            source2: rhs.into(),
+            lhs: lhs.into(),
+            rhs: rhs.into(),
             op: op.into(),
         }
     }
     pub fn new_eq(dest: Reg, lhs: Reg, op: EqOp, rhs: Reg) -> Self {
         Self::Op2 {
             dest: dest.into(),
-            source1: lhs.into(),
-            source2: rhs.into(),
+            lhs: lhs.into(),
+            rhs: rhs.into(),
             op: op.into(),
         }
     }
     pub fn new_cond(dest: Reg, lhs: Reg, op: CondOp, rhs: Reg) -> Self {
         Self::Op2 {
             dest: dest.into(),
-            source1: lhs.into(),
-            source2: rhs.into(),
+            lhs: lhs.into(),
+            rhs: rhs.into(),
             op: op.into(),
         }
     }
     pub fn new_rel(dest: Reg, lhs: Reg, op: RelOp, rhs: Reg) -> Self {
         Self::Op2 {
             dest: dest.into(),
-            source1: lhs.into(),
-            source2: rhs.into(),
+            lhs: lhs.into(),
+            rhs: rhs.into(),
             op: op.into(),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct Reg(usize);
+pub struct Reg(u32);
+
+impl Reg {
+    pub(super) fn new(num: u32) -> Self {
+        Self(num)
+    }
+
+    pub fn num(&self) -> u32 {
+        self.0
+    }
+}
+
+/// A short circuit register.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct Sc(u32);
+
+impl Sc {
+    pub(super) fn new(num: u32) -> Self {
+        Self(num)
+    }
+
+    pub fn num(&self) -> u32 {
+        self.0
+    }
+}
 
 impl Display for Reg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -339,12 +369,8 @@ impl Display for Reg {
     }
 }
 
-impl Reg {
-    pub fn new(id: usize) -> Self {
-        Self(id)
-    }
-
-    pub fn num(&self) -> usize {
-        self.0
+impl Display for Sc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "%sc{}", self.0)
     }
 }

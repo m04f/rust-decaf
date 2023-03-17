@@ -19,7 +19,7 @@ impl App for Asm {
             unreachable!("{:?}", e)
         });
         let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot).unwrap();
+        let hirtree = HIRRoot::from_proot(proot, true).unwrap();
         write!(stdout, "{}", hirtree.destruct().codegen()).unwrap();
         crate::ExitStatus::Success
     }
