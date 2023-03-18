@@ -7,6 +7,16 @@ pub type Op = parser::ast::Op;
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Symbol<'b>(pub(super) &'b str, pub(super) u16);
 
+impl<'a> Symbol<'a> {
+    pub fn name(&self) -> &'a str {
+        self.0
+    }
+
+    pub fn global(name: &'a str) -> Self {
+        Self(name, 0)
+    }
+}
+
 impl Display for Symbol<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}{}", self.0, self.1)
@@ -17,6 +27,15 @@ impl Display for Symbol<'_> {
 pub enum Immediate {
     Int(i64),
     Bool(bool),
+}
+
+impl From<Immediate> for i64 {
+    fn from(value: Immediate) -> Self {
+        match value {
+            Immediate::Int(i) => i,
+            Immediate::Bool(b) => b as i64,
+        }
+    }
 }
 
 impl Display for Immediate {
@@ -190,7 +209,7 @@ pub enum Instruction<'b> {
     Unary { dest: Dest<'b>, source: Source<'b>, op: Unary },
     Move { dest: Dest<'b>, source: Source<'b> },
     Select { dest: Dest<'b>, cond: Source<'b>, yes: Source<'b>, no: Source<'b> },
-    ReturnGuard,
+    Exit(i8),
     VoidCall { symbol: &'b str, args: Vec<Reg> },
     Call { dest: Dest<'b>, symbol: &'b str, args: Vec<Reg> },
     ExternCall { dest: Dest<'b>, symbol: &'b str, args: Vec<IRExternArg<'b>> },
@@ -206,13 +225,13 @@ impl Debug for Instruction<'_> {
             Self::AllocScalar { name } => write!(f, "alloc {name}"),
             Self::Move { dest, source } => write!(f, "{dest} = {source}"),
             Self::Unary { dest, source, op } => write!(f, "{dest} = {op:?} {source}"),
+            Self::Exit(code) => write!(f, "exit {code}"),
             Self::Select {
                 dest,
                 cond,
                 yes,
                 no,
             } => write!(f, "{} = select {} {} {}", dest, cond, yes, no),
-            Self::ReturnGuard => write!(f, "return guard"),
             Self::VoidCall { symbol, args } => write!(f, "void call {} {:?}", symbol, args),
             Self::Call { dest, symbol, args } => write!(f, "{} = call {} {:?}", dest, symbol, args),
             Self::ExternCall { dest, symbol, args } => {

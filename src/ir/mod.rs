@@ -1,8 +1,8 @@
 //! TODO: this module requries alot of refactoring.
 
+mod instruction;
 #[cfg(test)]
 mod test;
-mod instruction;
 pub use basicblock::*;
 pub use dot::*;
 pub use graph::*;
@@ -32,7 +32,7 @@ mod basicblock {
             reg
         }
 
-        pub fn allocated(&self) -> u32 {
+        pub fn allocated(self) -> u32 {
             self.0
         }
     }
@@ -406,6 +406,10 @@ mod graph {
             self.terminator().is_none()
         }
 
+        pub fn instructions(&self) -> &'b [Instruction<'b>] {
+            unsafe { self.block.as_ref().instructions() }
+        }
+
         pub fn neighbours(&self) -> Option<NeighbouringNodes<'b>> {
             match self.as_ref().terminator() {
                 None => None,
@@ -734,8 +738,10 @@ mod graph {
     }
 
     pub struct Function<'b> {
-        graph: Graph<'b>,
-        name: String,
+        pub(super) graph: Graph<'b>,
+        name: &'b str,
+        _end_of_control_msg: String,
+        _out_of_bound_msg: String,
         /// a vector that owns the named variables (currently only shortcircut variables that do
         /// not live in the original source code).
         allocated_regs: u32,
@@ -756,17 +762,26 @@ mod graph {
 
     impl<'b> Function<'b> {
         pub fn new(
-            name: impl ToString,
+            name: &'b str,
             graph: Graph<'b>,
             allocated_regs: u32,
+            end_of_control_msg: String,
+            out_of_bound_msg: String,
             args: impl IntoIterator<Item = Symbol<'b>>,
         ) -> Self {
             Self {
-                name: name.to_string(),
+                name,
                 args: args.into_iter().collect(),
+                _end_of_control_msg: end_of_control_msg,
+                _out_of_bound_msg: out_of_bound_msg,
                 allocated_regs,
                 graph,
             }
+        }
+
+        pub fn allocate_reg(&mut self) -> Reg {
+            self.allocated_regs += 1;
+            Reg::new(self.allocated_regs - 1)
         }
 
         pub fn allocated_regs(&self) -> u32 {
@@ -783,8 +798,8 @@ mod graph {
             dot
         }
 
-        pub fn name(&self) -> &str {
-            self.name.as_str()
+        pub fn name(&self) -> &'b str {
+            self.name
         }
 
         pub fn graph(&self) -> &Graph<'b> {
@@ -798,7 +813,7 @@ mod graph {
 
     pub struct Program<'b> {
         pub(super) functions: Vec<Function<'b>>,
-        pub(super) globals: Vec<(Symbol<'b>, usize)>,
+        pub(super) globals: Vec<(&'b str, usize)>,
     }
 
     impl<'b> Program<'b> {
@@ -806,12 +821,12 @@ mod graph {
             &self.functions
         }
 
-        pub fn globals(&self) -> &[(Symbol<'b>, usize)] {
+        pub fn globals(&self) -> &[(&'b str, usize)] {
             &self.globals
         }
 
         pub fn new<F: Into<Function<'b>>>(
-            globals: impl IntoIterator<Item = (Symbol<'b>, usize)>,
+            globals: impl IntoIterator<Item = (&'b str, usize)>,
             functions: impl IntoIterator<Item = F>,
         ) -> Self {
             Self {
@@ -1445,29 +1460,56 @@ mod destruct {
             let mut reg_allocator = RegAllocator::new();
             let body = self.body.destruct(&mut reg_allocator, &mangler, None);
             ccfg.append(body);
-            let mut graph = ccfg.build_graph();
-            // let return_guard_msg = format!(
-            //     r#""*** RUNTIME ERROR ***: No return value from non-void method \"{name}\"\n""#,
-            //     name = self.name.as_str()
-            // );
-            // Instruction::ExternCall {
-            //     dest: reg_allocator.alloc().into(),
-            //     symbol: "printf".to_string(),
-            //     args: vec![IRExternArg::String(&return_guard_msg)],
-            // };
+            let graph = ccfg.build_graph();
+
+            let return_guard_msg = format!(
+                r#""*** RUNTIME ERROR ***: No return value from non-void method \"{name}\"\n""#,
+                name = self.name.as_str()
+            );
+            let bound_guard_msg = format!(
+                r#""*** RUNTIME ERROR ***: Array out of Bounds access in method \"{name}\"\n""#,
+                name = self.name.as_str()
+            );
+
+            // sorry, but I could not get around this. (I do not think I can).
+            let return_guard = unsafe {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                    return_guard_msg.as_ptr(),
+                    return_guard_msg.as_bytes().len(),
+                ))
+            };
+
+            let mut func = Function::new(
+                self.name.as_str(),
+                graph,
+                reg_allocator.allocated(),
+                return_guard_msg,
+                bound_guard_msg,
+                self.args_sorted
+                    .iter()
+                    .map(|arg| mangler.mangle(arg.as_str())),
+            );
 
             // put return guards on the leafs.
             if self.ret.is_some() {
-                let mut bfs = graph.bfs_mut();
+                let end_of_control_rt_error = [
+                    Instruction::ExternCall {
+                        dest: func.allocate_reg().into(),
+                        symbol: "printf",
+                        args: vec![IRExternArg::String(return_guard)],
+                    },
+                    Instruction::Exit(-2),
+                ];
+                let mut bfs = func.graph.bfs_mut();
                 while let Some(mut node) = bfs.next() {
                     if node.as_ref().is_leaf() {
                         node.as_mut()
                             .instructions_mut()
-                            .push(Instruction::ReturnGuard)
+                            .extend(end_of_control_rt_error.clone())
                     }
                 }
             } else {
-                let mut bfs = graph.bfs_mut();
+                let mut bfs = func.graph_mut().bfs_mut();
                 while let Some(mut node) = bfs.next() {
                     if node.as_ref().is_leaf() {
                         node.as_mut()
@@ -1477,14 +1519,7 @@ mod destruct {
                 }
             }
 
-            Function::new(
-                self.name,
-                graph,
-                reg_allocator.allocated(),
-                self.args_sorted
-                    .iter()
-                    .map(|arg| mangler.mangle(arg.as_str())),
-            )
+            func
         }
     }
 
@@ -1492,9 +1527,9 @@ mod destruct {
         pub fn destruct(&self) -> Program {
             Program::new(
                 self.globals.values().map(|var| match var {
-                    HIRVar::Scalar(name) => (Symbol(name.into_val().as_str(), 0), 8),
+                    HIRVar::Scalar(name) => (name.into_val().as_str(), 8),
                     HIRVar::Array { arr, size, .. } => {
-                        (Symbol(arr.into_val().as_str(), 0), 8 * *size as usize)
+                        (arr.into_val().as_str(), 8 * *size as usize)
                     }
                 }),
                 self.functions.values().map(|func| func.destruct()),
