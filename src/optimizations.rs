@@ -8,7 +8,7 @@ pub mod peephole {
             while let Some(mut node) = dfs.next() {
                 while node
                     .as_mut()
-                    .merge_tail_if(|tail| tail.insrtuctions().is_empty())
+                    .merge_tail_if(|tail| tail.instructions().is_empty())
                 {}
             }
         }

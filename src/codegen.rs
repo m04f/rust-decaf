@@ -1427,7 +1427,7 @@ impl Function<'_> {
 
         symbols_to_offset.extend(self.graph().dfs().flat_map(|node| {
             node.as_ref()
-                .insrtuctions()
+                .instructions()
                 .iter()
                 .filter_map(|instruction| match *instruction {
                     Instruction::AllocScalar { name, .. } => Some((name, {
@@ -1465,7 +1465,7 @@ impl Function<'_> {
                 let reg_table = |reg: u32| (reg as i64 + 1) * -8 + stack_top;
                 let linear_instructions = node
                     .as_ref()
-                    .insrtuctions()
+                    .instructions()
                     .iter()
                     .filter_map(|instruction| {
                         LIr::from_ir(

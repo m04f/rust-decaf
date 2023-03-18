@@ -99,7 +99,7 @@ mod basicblock {
             self.terminator.as_ref()
         }
 
-        pub fn insrtuctions(&self) -> &[Instruction<'b>] {
+        pub fn instructions(&self) -> &[Instruction<'b>] {
             &self.instructions
         }
 
@@ -1559,7 +1559,7 @@ mod dot {
     impl Node<'_> {
         fn dot_label(&self) -> String {
             self.as_ref()
-                .insrtuctions()
+                .instructions()
                 .iter()
                 .fold(String::new(), |mut acc, instruction| {
                     acc.push_str(&format!("{instruction:?}\\n"));
