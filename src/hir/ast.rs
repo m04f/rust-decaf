@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use crate::{
     hir::sym_map::{FuncSymMap, ImportSymMap, VarSymMap},
     parser::ast::*,
@@ -46,7 +48,7 @@ impl<T> Typed<T> {
 #[derive(Debug, Clone, Copy)]
 pub enum HIRVar<'a> {
     Scalar(Typed<Span<'a>>),
-    Array { arr: Typed<Span<'a>>, size: u64 },
+    Array { arr: Typed<Span<'a>>, size: NonZeroU32 },
 }
 
 impl<'a> HIRVar<'a> {
@@ -59,7 +61,7 @@ impl<'a> HIRVar<'a> {
     pub fn is_array(&self) -> bool {
         matches!(self, Self::Array { .. })
     }
-    pub fn array_len(self) -> Option<u64> {
+    pub fn array_len(self) -> Option<NonZeroU32> {
         match self {
             Self::Scalar(_) => None,
             Self::Array { size, .. } => Some(size),
@@ -75,7 +77,7 @@ pub enum HIRLoc<'a> {
     Scalar(Typed<Span<'a>>),
     Index {
         arr: Typed<Span<'a>>,
-        size: u64,
+        size: NonZeroU32,
         index: HIRExpr<'a>,
     },
 }
@@ -238,7 +240,7 @@ impl TryFrom<Op> for CondOp {
 
 #[derive(Debug, Clone)]
 pub enum HIRExpr<'a> {
-    Len(u64),
+    Len(NonZeroU32),
     Not(Box<HIRExpr<'a>>),
     Neg(Box<HIRExpr<'a>>),
     Ter {

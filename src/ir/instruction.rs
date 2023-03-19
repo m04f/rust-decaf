@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    num::NonZeroU32,
+};
 
 use crate::{hir::*, parser, span::*};
 
@@ -143,6 +146,36 @@ impl From<Reg> for Source<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum Loc<'b> {
+    Symbol(Symbol<'b>),
+    Offset(Symbol<'b>, Reg),
+}
+
+impl<'a> From<Symbol<'a>> for Loc<'a> {
+    fn from(value: Symbol<'a>) -> Self {
+        Self::Symbol(value)
+    }
+}
+
+impl<'a> From<Loc<'a>> for Dest<'a> {
+    fn from(value: Loc<'a>) -> Self {
+        match value {
+            Loc::Symbol(s) => Dest::Symbol(s),
+            Loc::Offset(s, r) => Dest::Offset(s, r),
+        }
+    }
+}
+
+impl<'a> From<Loc<'a>> for Source<'a> {
+    fn from(value: Loc<'a>) -> Self {
+        match value {
+            Loc::Symbol(s) => Source::Symbol(s),
+            Loc::Offset(s, r) => Source::Offset(s, r),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Dest<'b> {
     Symbol(Symbol<'b>),
     Offset(Symbol<'b>, Reg),
@@ -188,6 +221,8 @@ pub enum Unary {
 #[derive(Clone)]
 pub enum IRExternArg<'b> {
     Source(Source<'b>),
+    /// The constant strings defined in the program. The strings do not include the two double
+    /// qutoes.
     String(&'b str),
 }
 
@@ -203,7 +238,7 @@ impl Debug for IRExternArg<'_> {
 #[rustfmt::skip]
 #[derive(Clone)]
 pub enum Instruction<'b> {
-    AllocArray { name: Symbol<'b>, size: u64 },
+    AllocArray { name: Symbol<'b>, size: NonZeroU32 },
     AllocScalar { name: Symbol<'b> },
     Op2 { dest: Dest<'b>, lhs: Source<'b>, rhs: Source<'b>, op: Op },
     Unary { dest: Dest<'b>, source: Source<'b>, op: Unary },
@@ -258,9 +293,9 @@ impl<'b> Instruction<'b> {
         }
     }
 
-    pub fn new_store(symbol: impl Into<Dest<'b>>, source: impl Into<Source<'b>>) -> Self {
+    pub fn new_store(dest: impl Into<Dest<'b>>, source: impl Into<Source<'b>>) -> Self {
         Self::Move {
-            dest: symbol.into(),
+            dest: dest.into(),
             source: source.into(),
         }
     }
@@ -300,10 +335,14 @@ impl<'b> Instruction<'b> {
             args,
         }
     }
-    pub fn new_extern_call(reg: Reg, symbol: Span<'b>, args: Vec<IRExternArg<'b>>) -> Self {
+    pub fn new_extern_call(
+        reg: Reg,
+        symbol: impl Into<&'b str>,
+        args: Vec<IRExternArg<'b>>,
+    ) -> Self {
         Self::ExternCall {
             dest: reg.into(),
-            symbol: symbol.as_str(),
+            symbol: symbol.into(),
             args,
         }
     }
@@ -345,7 +384,7 @@ impl<'b> Instruction<'b> {
             op: op.into(),
         }
     }
-    pub fn new_rel(dest: Reg, lhs: Reg, op: RelOp, rhs: Reg) -> Self {
+    pub fn new_rel(dest: Reg, lhs: Reg, op: RelOp, rhs: impl Into<Source<'b>>) -> Self {
         Self::Op2 {
             dest: dest.into(),
             lhs: lhs.into(),

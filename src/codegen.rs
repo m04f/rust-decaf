@@ -97,7 +97,6 @@ impl Display for Global {
         write!(
             f,
             r#"
-.globl {id}
 .align 8
 .size {id}, {size}
 {id}:
@@ -201,29 +200,13 @@ impl From<(i64, MemVar)> for SourceDest {
     }
 }
 
-impl TryFrom<(Source, Dest)> for SourceDest {
-    type Error = ();
-    fn try_from(value: (Source, Dest)) -> Result<Self, Self::Error> {
-        match value {
-            (Source::Reg(source), Dest::Reg(dest)) => Ok(Self::RegReg { source, dest }),
-            (Source::Reg(source), Dest::Mem(dest)) => Ok(Self::RegMem { source, dest }),
-            (Source::Mem(source), Dest::Reg(dest)) => Ok(Self::MemReg { source, dest }),
-            (Source::Imm(source), Dest::Reg(dest)) => Ok(Self::ImmReg { source, dest }),
-            (Source::Imm(source), Dest::Mem(dest)) => Ok(Self::ImmMem { source, dest }),
-            (Source::Index(source), Dest::Reg(dest)) => Ok(Self::IndReg { source, dest }),
-            (Source::Reg(source), Dest::Index(dest)) => Ok(Self::RegInd { source, dest }),
-            _ => Err(()),
-        }
-    }
-}
-
 impl From<(Source, MacReg)> for SourceDest {
     fn from(value: (Source, MacReg)) -> Self {
         match value {
             (Source::Reg(source), dest) => Self::RegReg { source, dest },
-            (Source::Mem(source), dest) => Self::MemReg { source, dest },
-            (Source::Imm(source), dest) => Self::ImmReg { source, dest },
-            (Source::Index(source), dest) => Self::IndReg { source, dest },
+            // (Source::Mem(source), dest) => Self::MemReg { source, dest },
+            // (Source::Imm(source), dest) => Self::ImmReg { source, dest },
+            // (Source::Index(source), dest) => Self::IndReg { source, dest },
         }
     }
 }
@@ -233,7 +216,7 @@ impl From<(MacReg, Dest)> for SourceDest {
         match value {
             (source, Dest::Reg(dest)) => Self::RegReg { source, dest },
             (source, Dest::Mem(dest)) => Self::RegMem { source, dest },
-            (source, Dest::Index(dest)) => Self::RegInd { source, dest },
+            // (source, Dest::Index(dest)) => Self::RegInd { source, dest },
         }
     }
 }
@@ -259,9 +242,9 @@ impl Display for Index {
 #[derive(Clone, Copy)]
 enum Source {
     Reg(MacReg),
-    Mem(MemVar),
-    Imm(i64),
-    Index(Index),
+    // Mem(MemVar),
+    // Imm(i64),
+    // Index(Index),
 }
 
 impl From<MacReg> for Source {
@@ -274,9 +257,9 @@ impl Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Source::Reg(reg) => write!(f, "{reg}"),
-            Source::Mem(mem) => write!(f, "{mem}"),
-            Source::Imm(imm) => write!(f, "${imm}"),
-            Source::Index(ind) => write!(f, "{ind}"),
+            // Source::Mem(mem) => write!(f, "{mem}"),
+            // Source::Imm(imm) => write!(f, "${imm}"),
+            // Source::Index(ind) => write!(f, "{ind}"),
         }
     }
 }
@@ -285,7 +268,7 @@ impl Display for Source {
 enum Dest {
     Reg(MacReg),
     Mem(MemVar),
-    Index(Index),
+    // Index(Index),
 }
 
 impl From<MemVar> for Dest {
@@ -299,7 +282,7 @@ impl Display for Dest {
         match self {
             Self::Reg(reg) => write!(f, "{reg}"),
             Self::Mem(mem) => write!(f, "{mem}"),
-            Self::Index(ind) => write!(f, "{ind}"),
+            // Self::Index(ind) => write!(f, "{ind}"),
         }
     }
 }
@@ -416,9 +399,16 @@ impl Display for Instruction<'_> {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 struct StringDef<'a> {
-    id: u16,
     string: &'a str,
+    id: u16,
+}
+
+impl StringDef<'_> {
+    fn get_ref(&self) -> StringRef {
+        StringRef(self.id)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -435,7 +425,7 @@ impl Display for StringDef<'_> {
         write!(
             f,
             r#".CStr{id}:
-  .string {string}"#,
+  .string "{string}""#,
             id = self.id,
             string = self.string
         )
@@ -527,7 +517,7 @@ impl Display for AsmFunction<'_> {
 
 #[derive(Default)]
 pub struct AsmArchive<'a> {
-    ro_data: Vec<StringDef<'a>>,
+    ro_data: HashMap<&'a str, StringDef<'a>>,
     bss_data: HashMap<&'a str, Global>,
     functions: Vec<AsmFunction<'a>>,
 }
@@ -538,18 +528,22 @@ impl<'a> AsmArchive<'a> {
     }
 
     fn get_string(&self, s: &'a str) -> StringRef {
-        self.ro_data
-            .iter()
-            .find_map(|string_def| (string_def.string == s).then_some(StringRef(string_def.id)))
-            .unwrap()
+        self.ro_data.get(s).copied().unwrap().get_ref()
     }
 
-    fn add_string(&mut self, string_def: &'a str) {
-        let id = self.ro_data.len();
-        self.ro_data.push(StringDef {
-            string: string_def,
-            id: id as u16,
-        });
+    /// Adds strings as read only data. The strings should not include the two double quotes!!
+    fn add_string(&mut self, s: &'a str) -> StringRef {
+        let len = self.ro_data.len();
+        self.ro_data
+            .entry(s)
+            .or_insert_with(|| {
+                let id = StringRef(len as u16);
+                StringDef {
+                    string: s,
+                    id: id.0,
+                }
+            })
+            .get_ref()
     }
 
     fn add_global(&mut self, name: &'a str, size: usize) {
@@ -558,7 +552,6 @@ impl<'a> AsmArchive<'a> {
     }
 
     fn get_global(&self, name: &'a str) -> MemVar {
-        println!("name: {name}");
         MemVar::Global(GlobalRef(self.bss_data.get(name).unwrap().id))
     }
 
@@ -572,7 +565,7 @@ impl Display for AsmArchive<'_> {
         writeln!(f, ".text")?;
         writeln!(f, ".section .rodata")?;
         self.ro_data
-            .iter()
+            .values()
             .try_fold((), |_, string_def| writeln!(f, "{string_def}"))?;
 
         writeln!(f, "\n.text")?;
@@ -729,12 +722,10 @@ impl<'a> IRInstruction<'a> {
                 op: Unary::Not,
             } => {
                 source.move_to_reg(R10, R11, &mut symbol_to_mem, &mut reg_to_stack, section);
-                section
-                    .add_instruction(Mov(SourceDest::from((1, R11))))
-                    .add_instruction(Xor(SourceDest::from((R10, R11))));
+                section.add_instruction(Xor(SourceDest::from((1, R10))));
                 dest.assign(
-                    R11,
                     R10,
+                    R11,
                     Rax,
                     &mut symbol_to_mem,
                     &mut reg_to_stack,
@@ -749,8 +740,8 @@ impl<'a> IRInstruction<'a> {
                 source.move_to_reg(R10, R11, &mut symbol_to_mem, &mut reg_to_stack, section);
                 section.add_instruction(Neg(R10));
                 dest.assign(
-                    R11,
                     R10,
+                    R11,
                     Rax,
                     &mut symbol_to_mem,
                     &mut reg_to_stack,
@@ -780,9 +771,9 @@ impl<'a> IRInstruction<'a> {
                 );
             }
             &Self::Op2 { dest, lhs, rhs, op } => {
-                lhs.move_to_reg(R10, R11, &mut symbol_to_mem, &mut reg_to_stack, section);
-                rhs.move_to_reg(R11, Rax, &mut symbol_to_mem, &mut reg_to_stack, section);
-                let lhs = R10;
+                lhs.move_to_reg(Rax, R10, &mut symbol_to_mem, &mut reg_to_stack, section);
+                rhs.move_to_reg(R11, R10, &mut symbol_to_mem, &mut reg_to_stack, section);
+                let lhs = Rax;
                 let rhs = R11;
                 if let Op::Mul = op {
                     section
@@ -798,7 +789,6 @@ impl<'a> IRInstruction<'a> {
                     );
                 } else if let Op::Div = op {
                     section
-                        .add_instruction(Mov(SourceDest::from((lhs, Rax))))
                         .add_instruction(Cqto)
                         .add_instruction(IDiv(rhs.into()));
                     dest.assign(
@@ -811,7 +801,6 @@ impl<'a> IRInstruction<'a> {
                     );
                 } else if let Op::Mod = op {
                     section
-                        .add_instruction(Mov(SourceDest::from((lhs, Rax))))
                         .add_instruction(Cqto)
                         .add_instruction(IDiv(rhs.into()));
                     dest.assign(
@@ -824,14 +813,12 @@ impl<'a> IRInstruction<'a> {
                     );
                 } else if op.is_cmp() {
                     section
-                        .add_instruction(Mov(SourceDest::from((lhs, R10))))
-                        .add_instruction(Mov(SourceDest::from((rhs, R11))))
-                        .add_instruction(Cmp(R11, R10))
-                        .add_instruction(Mov(SourceDest::from((1, R10))))
-                        .add_instruction(Mov(SourceDest::from((0, R11))))
-                        .add_instruction(Instruction::cmove(*op, SourceDest::from((R10, R11))));
+                        .add_instruction(Cmp(rhs, lhs))
+                        .add_instruction(Mov(SourceDest::from((1, lhs))))
+                        .add_instruction(Mov(SourceDest::from((0, rhs))))
+                        .add_instruction(Instruction::cmove(*op, SourceDest::from((lhs, rhs))));
                     dest.assign(
-                        R11,
+                        rhs,
                         R10,
                         Rax,
                         &mut symbol_to_mem,
@@ -840,13 +827,13 @@ impl<'a> IRInstruction<'a> {
                     );
                 } else if op.is_arith() || op.is_logic() {
                     section
-                        .add_instruction(Mov(SourceDest::from((lhs, R11))))
-                        .add_instruction(Mov(SourceDest::from((rhs, R10))))
-                        .add_instruction(Instruction::binop(*op, SourceDest::from((R10, R11))));
+                        // this is not a typo - we want to move the result into the lhs
+                        // `sub S, D Subtract source from destination`
+                        .add_instruction(Instruction::binop(*op, SourceDest::from((rhs, lhs))));
                     dest.assign(
-                        R11,
+                        lhs,
                         R10,
-                        Rax,
+                        R11,
                         &mut symbol_to_mem,
                         &mut reg_to_stack,
                         section,
@@ -983,7 +970,9 @@ impl<'b> Function<'b> {
                     })
                     .flatten()
             })
-            .for_each(|cstr| archive.add_string(cstr));
+            .for_each(|cstr| {
+                archive.add_string(cstr);
+            });
 
         let mut symbols_to_offset = self
             .args()
@@ -1002,8 +991,6 @@ impl<'b> Function<'b> {
 
         let mut stack_top = symbols_to_offset.len() as i32 * -8;
 
-        eprintln!("{}: {:#?}", self.name(), symbols_to_offset);
-
         symbols_to_offset.extend(self.graph().dfs().flat_map(|node| {
             node.instructions()
                 .iter()
@@ -1013,15 +1000,13 @@ impl<'b> Function<'b> {
                         MemVar::Stack(StackOffset(stack_top))
                     })),
                     IRInstruction::AllocArray { name, size } => Some((name, {
-                        stack_top -= (size * 8) as i32;
+                        stack_top -= (size.get() * 8) as i32;
                         MemVar::Stack(StackOffset(stack_top))
                     })),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
         }));
-
-        eprintln!("{}: {:#?}", self.name(), symbols_to_offset);
 
         let reg_table = move |reg: u32| StackOffset((reg as i32 + 1) * -8 + stack_top);
         let sym_table = |sym| {

@@ -1,6 +1,6 @@
 use crate::{span::Span, parser::{self, ast::*} };
 
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, num::NonZeroU32};
 
 mod ast;
 mod error;
@@ -419,11 +419,9 @@ fn from_pvar(
                 if let Ok(size) = HIRLiteral::from_pliteral(PLiteral::from(size), false)
                     .map(|size| size.int().unwrap())
                 {
-                    if size == 0 {
-                        Err(ZeroArraySize(size_span))
-                    } else {
-                        Ok(Self::Array { arr: Typed::new(ty, ident.span()), size: size as u64 })
-                    }
+                    NonZeroU32::new(size as u32).map(|size| {
+                        Self::Array { arr: Typed::new(ty, ident.span()), size }
+                    }).ok_or(ZeroArraySize(size_span))
                 } else {
                     Err(TooLargeInt(size_span))
                 }

@@ -163,6 +163,11 @@ pub struct Span<'a> {
     span_source: &'a SpanSource<'a>,
 }
 
+impl<'a> From<Span<'a>> for &'a str {
+    fn from(value: Span<'a>) -> Self {
+        value.as_str()
+    }
+}
 impl Hash for Span<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.source.hash(state);

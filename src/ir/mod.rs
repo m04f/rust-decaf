@@ -740,10 +740,6 @@ mod graph {
     pub struct Function<'b> {
         pub(super) graph: Graph<'b>,
         name: &'b str,
-        _end_of_control_msg: String,
-        _out_of_bound_msg: String,
-        /// a vector that owns the named variables (currently only shortcircut variables that do
-        /// not live in the original source code).
         allocated_regs: u32,
         args: Vec<Symbol<'b>>,
     }
@@ -765,15 +761,11 @@ mod graph {
             name: &'b str,
             graph: Graph<'b>,
             allocated_regs: u32,
-            end_of_control_msg: String,
-            out_of_bound_msg: String,
             args: impl IntoIterator<Item = Symbol<'b>>,
         ) -> Self {
             Self {
                 name,
                 args: args.into_iter().collect(),
-                _end_of_control_msg: end_of_control_msg,
-                _out_of_bound_msg: out_of_bound_msg,
                 allocated_regs,
                 graph,
             }
@@ -905,6 +897,18 @@ mod ccfg {
             graph
         }
 
+        pub fn append_if_possible(&mut self, other: Self) -> &mut Self {
+            unsafe {
+                if let Some(end) = self.end {
+                    (*end.as_ptr()).link_unconditional(other.beg);
+                    self.end = other.end;
+                    self
+                } else {
+                    self
+                }
+            }
+        }
+
         pub fn append(&mut self, other: Self) -> &mut Self {
             unsafe {
                 if let Some(end) = self.end {
@@ -987,7 +991,7 @@ mod destruct {
     use std::cell::UnsafeCell;
     use std::collections::HashSet;
 
-    use super::{ccfg::*, IRExternArg, Program};
+    use super::{ccfg::*, IRExternArg, Loc, Program};
     use crate::{
         hir::*,
         ir::{BBMetaData, BasicBlock, Function, Immediate, Instruction, Reg, RegAllocator, Symbol},
@@ -1068,6 +1072,7 @@ mod destruct {
             &self,
             reg_allocator: &mut RegAllocator,
             mangler: &NameMangler<'_, 'b>,
+            func_name: &'b str,
         ) -> (CCfg<'b>, Reg) {
             use HIRExpr::*;
             match self {
@@ -1083,40 +1088,27 @@ mod destruct {
                     (
                         CCfg::new(Box::new(BasicBlock::new(
                             BBMetaData::new(None),
-                            &[Instruction::new_load(res, Immediate::Int(*size as i64))],
+                            &[Instruction::new_load(
+                                res,
+                                Immediate::Int(size.get() as i64),
+                            )],
                         ))),
                         res,
                     )
                 }
-                HIRExpr::Loc(loc) => match loc.as_ref() {
-                    HIRLoc::Scalar(sym) => {
-                        let res = reg_allocator.alloc_ssa();
-                        let bb = BasicBlock::new(
-                            BBMetaData::new(None),
-                            &[Instruction::new_load(
-                                res,
-                                mangler.mangle(sym.into_val().as_str()),
-                            )],
-                        );
-                        (CCfg::new(Box::new(bb)), res)
-                    }
-                    HIRLoc::Index { arr, index, .. } => {
-                        let (mut index_ccfg, index) = index.destruct(reg_allocator, mangler);
-                        let res = reg_allocator.alloc_ssa();
-                        index_ccfg.append(CCfg::new(Box::new(BasicBlock::new(
-                            BBMetaData::new(None),
-                            &[Instruction::new_load_offset(
-                                res,
-                                mangler.mangle(arr.into_val().as_str()),
-                                index,
-                            )],
-                        ))));
-                        (index_ccfg, res)
-                    }
-                },
+                HIRExpr::Loc(loc) => {
+                    let (mut ccfg, loc) = loc.destruct(reg_allocator, mangler, func_name);
+                    let res = reg_allocator.alloc_ssa();
+                    let assign = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_load(res, loc)],
+                    )));
+                    ccfg.append(assign);
+                    (ccfg, res)
+                }
                 HIRExpr::Arith { op, lhs, rhs } => {
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
-                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
+                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -1127,8 +1119,8 @@ mod destruct {
                 }
 
                 HIRExpr::Rel { op, lhs, rhs } => {
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
-                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
+                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -1138,8 +1130,8 @@ mod destruct {
                     (ccfg_lhs, res)
                 }
                 Eq { op, lhs, rhs } => {
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
-                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
+                    let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
                     let equ = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -1149,7 +1141,7 @@ mod destruct {
                     (ccfg_lhs, res)
                 }
                 Neg(e) => {
-                    let (mut ccfg, res_neg) = e.destruct(reg_allocator, mangler);
+                    let (mut ccfg, res_neg) = e.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
                     let bb = BasicBlock::new(
                         BBMetaData::new(None),
@@ -1159,7 +1151,7 @@ mod destruct {
                     (ccfg, res)
                 }
                 Not(e) => {
-                    let (mut ccfg, res_not) = e.destruct(reg_allocator, mangler);
+                    let (mut ccfg, res_not) = e.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
                     let bb = BasicBlock::new(
                         BBMetaData::new(None),
@@ -1169,9 +1161,9 @@ mod destruct {
                     (ccfg, res)
                 }
                 Ter { cond, yes, no } => {
-                    let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler);
-                    let (ccfg_no, no) = no.destruct(reg_allocator, mangler);
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
+                    let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler, func_name);
+                    let (ccfg_no, no) = no.destruct(reg_allocator, mangler, func_name);
+                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
                     let select = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
@@ -1180,7 +1172,7 @@ mod destruct {
                     ccfg_yes.append(ccfg_no).append(ccfg_cond).append(select);
                     (ccfg_yes, res)
                 }
-                Call(call) => call.destruct_ret(reg_allocator, mangler),
+                Call(call) => call.destruct_ret(reg_allocator, mangler, func_name),
                 Cond {
                     lhs,
                     rhs,
@@ -1188,8 +1180,8 @@ mod destruct {
                 } => {
                     let scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
                     let sc = reg_allocator.alloc_sc();
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
-                    let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
+                    let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let set_true = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_store(sc, true)],
@@ -1221,8 +1213,8 @@ mod destruct {
                 } => {
                     let scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
                     let sc = reg_allocator.alloc_sc();
-                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler);
-                    let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler);
+                    let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
+                    let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let set_false = CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
                         &[Instruction::new_store(sc, false)],
@@ -1256,12 +1248,13 @@ mod destruct {
             &self,
             reg_allocator: &mut RegAllocator,
             mangler: &NameMangler<'_, 'b>,
+            func_name: &'b str,
         ) -> (CCfg<'b>, Reg) {
             match self {
                 HIRCall::Decaf { name, args, .. } => {
                     let (mut ccfg, args) = args
                         .iter()
-                        .map(|arg| arg.destruct(reg_allocator, mangler))
+                        .map(|arg| arg.destruct(reg_allocator, mangler, func_name))
                         .fold(
                             (CCfg::new_empty(), Vec::new()),
                             |(mut ccfg, mut args), (ccfg_arg, arg)| {
@@ -1286,13 +1279,16 @@ mod destruct {
                             match arg {
                                 ExternArg::String(sym) => Err(*sym),
                                 ExternArg::Array(..) => unimplemented!(),
-                                ExternArg::Expr(e) => Ok(e.destruct(reg_allocator, mangler)),
+                                ExternArg::Expr(e) => {
+                                    Ok(e.destruct(reg_allocator, mangler, func_name))
+                                }
                             }
                             .map(|(ccfg_arg, arg)| {
                                 ccfg.append(ccfg_arg);
                                 IRExternArg::Source(arg.into())
                             })
-                            .map_err(IRExternArg::String)
+                            // trim the two quotes.
+                            .map_err(|arg| IRExternArg::String(&arg[1..arg.len() - 1]))
                             .unwrap_or_else(|e| e)
                         })
                         .collect();
@@ -1314,11 +1310,12 @@ mod destruct {
             reg_allocator: &mut RegAllocator,
             mangler: &NameMangler<'_, 'b>,
             loop_exit: Option<&LoopExit<'b>>,
+            func_name: &'b str,
         ) -> CCfg<'b> {
             use HIRStmt::*;
             match self {
                 Expr(e) => {
-                    let (ccfg, _) = e.destruct(reg_allocator, mangler);
+                    let (ccfg, _) = e.destruct(reg_allocator, mangler, func_name);
                     ccfg
                 }
                 Break => {
@@ -1331,10 +1328,10 @@ mod destruct {
                     ccfg.append_continue(loop_exit.unwrap().r#continue());
                     ccfg
                 }
-                Assign(assign) => assign.destruct(reg_allocator, mangler),
+                Assign(assign) => assign.destruct(reg_allocator, mangler, func_name),
 
                 Return(Some(e)) => {
-                    let (mut ccfg, res) = e.destruct(reg_allocator, mangler);
+                    let (mut ccfg, res) = e.destruct(reg_allocator, mangler, func_name);
                     let instruction = Instruction::new_return(res);
                     let bb = BasicBlock::new(BBMetaData::new(None), &[instruction]);
                     ccfg.append(CCfg::new(Box::new(bb)));
@@ -1345,16 +1342,16 @@ mod destruct {
                     &[Instruction::new_void_ret()],
                 ))),
                 If { cond, yes, no } => {
-                    let (mut ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
-                    let ccfg_yes = yes.destruct(reg_allocator, mangler, loop_exit);
-                    let ccfg_no = no.destruct(reg_allocator, mangler, loop_exit);
+                    let (mut ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
+                    let ccfg_yes = yes.destruct(reg_allocator, mangler, loop_exit, func_name);
+                    let ccfg_no = no.destruct(reg_allocator, mangler, loop_exit, func_name);
                     ccfg_cond.append_cond(cond, ccfg_yes, ccfg_no);
                     ccfg_cond
                 }
                 While { cond, body } => {
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
+                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
                     let loop_exit = LoopExit::new(ccfg_cond, cond);
-                    let body = body.destruct(reg_allocator, mangler, Some(&loop_exit));
+                    let body = body.destruct(reg_allocator, mangler, Some(&loop_exit), func_name);
                     loop_exit.build(body)
                 }
                 For {
@@ -1363,13 +1360,14 @@ mod destruct {
                     update,
                     body,
                 } => {
-                    let mut init = init.destruct(reg_allocator, mangler);
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler);
+                    let mut init = init.destruct(reg_allocator, mangler, func_name);
+                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
                     let loop_exit = LoopExit::new(ccfg_cond, cond);
 
-                    let update = update.destruct(reg_allocator, mangler);
-                    let mut body = body.destruct(reg_allocator, mangler, Some(&loop_exit));
-                    body.append(update);
+                    let update = update.destruct(reg_allocator, mangler, func_name);
+                    let mut body =
+                        body.destruct(reg_allocator, mangler, Some(&loop_exit), func_name);
+                    body.append_if_possible(update);
                     let r#loop = loop_exit.build(body);
 
                     init.append(r#loop);
@@ -1379,37 +1377,87 @@ mod destruct {
         }
     }
 
+    impl<'b> HIRLoc<'b> {
+        fn destruct(
+            &self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler<'_, 'b>,
+            func_name: &'b str,
+        ) -> (CCfg<'b>, Loc<'b>) {
+            match &self {
+                HIRLoc::Index { arr, index, size } => {
+                    let (mut index_ccfg, index) = index.destruct(reg_allocator, mangler, func_name);
+                    let less_than_zero = reg_allocator.alloc_ssa();
+                    let larger_than_bound = reg_allocator.alloc_ssa();
+                    let bound_cond = reg_allocator.alloc_ssa();
+                    let mut bound_check = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[
+                            Instruction::new_rel(
+                                less_than_zero,
+                                index,
+                                RelOp::Less,
+                                Immediate::Int(0),
+                            ),
+                            Instruction::new_rel(
+                                larger_than_bound,
+                                index,
+                                RelOp::GreaterEqual,
+                                Immediate::Int(size.get() as i64),
+                            ),
+                            Instruction::new_cond(
+                                bound_cond,
+                                less_than_zero,
+                                CondOp::Or,
+                                larger_than_bound,
+                            ),
+                        ],
+                    )));
+                    let on_bound_fail = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[
+                            Instruction::new_extern_call(
+                                reg_allocator.alloc_ssa(),
+                                "printf",
+                                vec![
+                                    IRExternArg::String(
+                                        r#"*** RUNTIME ERROR ***: Array out of Bounds access in method \"%s\"\n"#,
+                                    ),
+                                    IRExternArg::String(func_name),
+                                ],
+                            ),
+                            Instruction::Exit(-1),
+                        ],
+                    )));
+                    bound_check.append_cond(bound_cond, on_bound_fail, CCfg::new_empty());
+                    index_ccfg.append(bound_check);
+                    (
+                        index_ccfg,
+                        Loc::Offset(mangler.mangle(arr.into_val().as_str()), index),
+                    )
+                }
+                HIRLoc::Scalar(sym) => (
+                    CCfg::new_empty(),
+                    mangler.mangle(sym.into_val().as_str()).into(),
+                ),
+            }
+        }
+    }
     impl<'b> HIRAssign<'b> {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
             mangler: &NameMangler<'_, 'b>,
+            func_name: &'b str,
         ) -> CCfg<'b> {
-            let (mut ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler);
-            match &self.lhs {
-                HIRLoc::Index { arr, index, .. } => {
-                    let (index_ccfg, index) = index.destruct(reg_allocator, mangler);
-                    let store = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store_offset(
-                            mangler.mangle(arr.into_val().as_str()),
-                            index,
-                            rhs,
-                        )],
-                    )));
-                    ccfg.append(index_ccfg).append(store);
-                    ccfg
-                }
-                HIRLoc::Scalar(sym) => {
-                    let store =
-                        Instruction::new_store(mangler.mangle(sym.into_val().as_str()), rhs);
-                    ccfg.append(CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[store],
-                    ))));
-                    ccfg
-                }
-            }
+            let (mut ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler, func_name);
+            let (ccfg_loc, lhs) = self.lhs.destruct(reg_allocator, mangler, func_name);
+            let assign = CCfg::new(Box::new(BasicBlock::new(
+                BBMetaData::new(None),
+                &[Instruction::new_store(lhs, rhs)],
+            )));
+            ccfg.append(ccfg_loc).append(assign);
+            ccfg
         }
     }
 
@@ -1419,6 +1467,7 @@ mod destruct {
             reg_allocator: &mut RegAllocator,
             mangler: &NameMangler<'_, 'b>,
             loop_exit: Option<&LoopExit<'b>>,
+            func_name: &'b str,
         ) -> CCfg<'b> {
             let mangler = mangler.nest(self.decls().keys().map(|span| span.as_str()));
             let stack_allocs = self
@@ -1442,7 +1491,7 @@ mod destruct {
                 &stack_allocs,
             )));
             for stmt in self.stmts.iter() {
-                let stmt = stmt.destruct(reg_allocator, &mangler, loop_exit);
+                let stmt = stmt.destruct(reg_allocator, &mangler, loop_exit, func_name);
                 ccfg.append(stmt);
                 if !ccfg.can_append() {
                     break;
@@ -1458,33 +1507,16 @@ mod destruct {
             let empty = vec![];
             let mut ccfg = CCfg::new(Box::new(BasicBlock::new(BBMetaData::default(), &empty)));
             let mut reg_allocator = RegAllocator::new();
-            let body = self.body.destruct(&mut reg_allocator, &mangler, None);
+            let body = self
+                .body
+                .destruct(&mut reg_allocator, &mangler, None, self.name.as_str());
             ccfg.append(body);
             let graph = ccfg.build_graph();
-
-            let return_guard_msg = format!(
-                r#""*** RUNTIME ERROR ***: No return value from non-void method \"{name}\"\n""#,
-                name = self.name.as_str()
-            );
-            let bound_guard_msg = format!(
-                r#""*** RUNTIME ERROR ***: Array out of Bounds access in method \"{name}\"\n""#,
-                name = self.name.as_str()
-            );
-
-            // sorry, but I could not get around this. (I do not think I can).
-            let return_guard = unsafe {
-                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                    return_guard_msg.as_ptr(),
-                    return_guard_msg.as_bytes().len(),
-                ))
-            };
 
             let mut func = Function::new(
                 self.name.as_str(),
                 graph,
                 reg_allocator.allocated(),
-                return_guard_msg,
-                bound_guard_msg,
                 self.args_sorted
                     .iter()
                     .map(|arg| mangler.mangle(arg.as_str())),
@@ -1496,7 +1528,12 @@ mod destruct {
                     Instruction::ExternCall {
                         dest: func.allocate_reg().into(),
                         symbol: "printf",
-                        args: vec![IRExternArg::String(return_guard)],
+                        args: vec![
+                            IRExternArg::String(
+                                r#"*** RUNTIME ERROR ***: No return value from non-void method \"%s\"\n"#,
+                            ),
+                            IRExternArg::String(func.name()),
+                        ],
                     },
                     Instruction::Exit(-2),
                 ];
@@ -1529,7 +1566,7 @@ mod destruct {
                 self.globals.values().map(|var| match var {
                     HIRVar::Scalar(name) => (name.into_val().as_str(), 8),
                     HIRVar::Array { arr, size, .. } => {
-                        (arr.into_val().as_str(), 8 * *size as usize)
+                        (arr.into_val().as_str(), 8 * size.get() as usize)
                     }
                 }),
                 self.functions.values().map(|func| func.destruct()),
