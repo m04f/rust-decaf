@@ -29,7 +29,8 @@ impl App for DumpCFG {
                 fs::create_dir_all(&out_dir).unwrap();
                 let out_file =
                     |function: &Function| out_dir.join(function.name()).with_extension("svg");
-                let output_files = tree.destruct()
+                let output_files = tree
+                    .destruct()
                     .functions()
                     .iter()
                     .map(|function| {

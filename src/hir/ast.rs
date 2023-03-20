@@ -48,7 +48,10 @@ impl<T> Typed<T> {
 #[derive(Debug, Clone, Copy)]
 pub enum HIRVar<'a> {
     Scalar(Typed<Span<'a>>),
-    Array { arr: Typed<Span<'a>>, size: NonZeroU32 },
+    Array {
+        arr: Typed<Span<'a>>,
+        size: NonZeroU32,
+    },
 }
 
 impl<'a> HIRVar<'a> {

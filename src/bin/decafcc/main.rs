@@ -1,12 +1,12 @@
 use std::io::{stderr, stdout};
 
-use crate::{lexer::Lexer, parser::Parser, semantics::Semantics, dumpcfg::DumpCFG, asm::Asm};
+use crate::{asm::Asm, dumpcfg::DumpCFG, lexer::Lexer, parser::Parser, semantics::Semantics};
 
+mod asm;
 mod dumpcfg;
 mod lexer;
 mod parser;
 mod semantics;
-mod asm;
 
 trait App {
     fn run(

@@ -92,9 +92,15 @@ pub(super) fn construct_var_hashmap<'a, T: AsRef<[PVar<'a>]>>(
             }
         }
     }
-    let vars = vars.iter().filter_map(|var| {
-        HIRVar::from_pvar(*var).map(|var| (var.name(), var)).map_err(|e| errors.push(e)).ok()
-    }).collect();
+    let vars = vars
+        .iter()
+        .filter_map(|var| {
+            HIRVar::from_pvar(*var)
+                .map(|var| (var.name(), var))
+                .map_err(|e| errors.push(e))
+                .ok()
+        })
+        .collect();
     if !errors.is_empty() {
         Err(errors)
     } else {

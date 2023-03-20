@@ -392,10 +392,16 @@ fn char_literal(span: Span) -> Option<(Spanned<Result>, Span)> {
         }
     } else if span[1] == b'\'' {
         let (lit, rem) = span.split_at(2);
-        Some((lit.into_spanned(Err(Error::EmptyChar(span.split_at(2).0))), rem))
+        Some((
+            lit.into_spanned(Err(Error::EmptyChar(span.split_at(2).0))),
+            rem,
+        ))
     } else if span[2] != b'\'' {
         let (lit, rem) = span.split_at(2);
-        Some((lit.into_spanned(Err(Error::UnterminatedChar(span.split_at(2).0))), rem))
+        Some((
+            lit.into_spanned(Err(Error::UnterminatedChar(span.split_at(2).0))),
+            rem,
+        ))
     } else {
         let (lit, rem) = span.split_at(3);
         Some((dcf_char(lit), rem))
@@ -444,7 +450,10 @@ fn non_ascii_graphic_chars(span: Span) -> Option<(Spanned<Result>, Span)> {
     if bad_chars.is_empty() {
         None
     } else {
-        Some((bad_chars.into_spanned(Err(Error::NonAsciiChars(bad_chars))), rem))
+        Some((
+            bad_chars.into_spanned(Err(Error::NonAsciiChars(bad_chars))),
+            rem,
+        ))
     }
 }
 

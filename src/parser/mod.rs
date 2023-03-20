@@ -5,12 +5,10 @@ mod error;
 pub use error::*;
 use Error::*;
 pub mod ast;
-use ast::*;
 use ast::checker::*;
+use ast::*;
 
 type Result<T> = std::result::Result<T, ExitStatus>;
-
-
 
 /// the error returned by the parser.
 #[derive(Debug, PartialEq, Eq)]

@@ -1,5 +1,5 @@
-use crate::lexer::Token;
 use crate::error::*;
+use crate::lexer::Token;
 use crate::span::*;
 
 use Error::*;

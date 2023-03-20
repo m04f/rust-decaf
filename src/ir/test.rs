@@ -20,7 +20,10 @@ macro_rules! test_valid {
                     unreachable!("{:?}", e)
                 });
             let proot: PRoot = parser.doc_elems().collect();
-            let _program = HIRRoot::from_proot(proot, true).unwrap().destruct().codegen();
+            let _program = HIRRoot::from_proot(proot, true)
+                .unwrap()
+                .destruct()
+                .codegen();
         }
     };
     ($part1:ident-$part2:ident, $num:literal) => {
@@ -40,7 +43,10 @@ macro_rules! test_valid {
                     unreachable!("{:?}", e)
                 });
             let proot: PRoot = parser.doc_elems().collect();
-            let _program = HIRRoot::from_proot(proot, true).unwrap().destruct().codegen();
+            let _program = HIRRoot::from_proot(proot, true)
+                .unwrap()
+                .destruct()
+                .codegen();
         }
     };
     ($part1:ident-$part2:ident-$part3:ident, $num:literal) => {
@@ -62,7 +68,10 @@ macro_rules! test_valid {
                     unreachable!("{:?}", e)
                 });
             let proot: PRoot = parser.doc_elems().collect();
-            let _program = HIRRoot::from_proot(proot, true).unwrap().destruct().codegen();
+            let _program = HIRRoot::from_proot(proot, true)
+                .unwrap()
+                .destruct()
+                .codegen();
         }
     };
 }
@@ -72,16 +81,16 @@ test_valid!(expr, 02);
 test_valid!(math, 03);
 test_valid!(math2, 04);
 test_valid!(calls, 05);
-test_valid!(control-flow, 06);
+test_valid!(control - flow, 06);
 test_valid!(recursion, 07);
 test_valid!(array, 08);
 test_valid!(global, 09);
 test_valid!(bounds, 10);
-test_valid!(big-array, 11);
+test_valid!(big - array, 11);
 test_valid!(huge, 12);
 test_valid!(ifs, 13);
 test_valid!(shortcircuit, 14);
 test_valid!(not, 15);
 test_valid!(qsort, 16);
 test_valid!(insertionsort, 17);
-test_valid!(dead-code-bounds, 18);
+test_valid!(dead - code - bounds, 18);
