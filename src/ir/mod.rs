@@ -1448,6 +1448,22 @@ mod destruct {
             }
         }
     }
+
+    impl<'b> AssignOp<'b> {
+        fn destruct(
+            &self,
+            reg_allocator: &mut RegAllocator,
+            mangler: &NameMangler<'_, 'b>,
+            func_name: &'b str,
+        ) -> (CCfg<'b>, Reg) {
+            match self {
+                AssignOp::AddAssign(e) | AssignOp::SubAssign(e) | AssignOp::Assign(e) => {
+                    e.destruct(reg_allocator, mangler, func_name)
+                }
+            }
+        }
+    }
+
     impl<'b> HIRAssign<'b> {
         fn destruct(
             &self,
@@ -1455,14 +1471,18 @@ mod destruct {
             mangler: &NameMangler<'_, 'b>,
             func_name: &'b str,
         ) -> CCfg<'b> {
-            let (mut ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler, func_name);
-            let (ccfg_loc, lhs) = self.lhs.destruct(reg_allocator, mangler, func_name);
+            let (mut ccfg_loc, lhs) = self.lhs.destruct(reg_allocator, mangler, func_name);
+            let (ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler, func_name);
             let assign = CCfg::new(Box::new(BasicBlock::new(
                 BBMetaData::new(None),
-                &[Instruction::new_store(lhs, rhs)],
+                &match self.rhs {
+                    AssignOp::AddAssign(_) => [Instruction::new_arith(lhs, lhs, ArithOp::Add, rhs)],
+                    AssignOp::SubAssign(_) => [Instruction::new_arith(lhs, lhs, ArithOp::Sub, rhs)],
+                    AssignOp::Assign(_) => [Instruction::new_store(lhs, rhs)],
+                },
             )));
-            ccfg.append(ccfg_loc).append(assign);
-            ccfg
+            ccfg_loc.append(ccfg).append(assign);
+            ccfg_loc
         }
     }
 

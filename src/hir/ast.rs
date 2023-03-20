@@ -478,5 +478,12 @@ pub struct HIRRoot<'a> {
 #[derive(Debug, Clone)]
 pub struct HIRAssign<'a> {
     pub lhs: HIRLoc<'a>,
-    pub rhs: HIRExpr<'a>,
+    pub rhs: AssignOp<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AssignOp<'a> {
+    AddAssign(HIRExpr<'a>),
+    SubAssign(HIRExpr<'a>),
+    Assign(HIRExpr<'a>),
 }

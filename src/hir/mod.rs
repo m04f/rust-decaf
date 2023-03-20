@@ -353,7 +353,6 @@ impl<'a> HIRAssign<'a> {
         fst: FSymMap<'a, '_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         use parser::ast::PAssignExpr::*;
-        use ArithOp::*;
         let lhs_span = assign.lhs.span();
         let loc = HIRLoc::from_ploc(assign.lhs, vst, fst)?;
         match assign.op {
@@ -361,14 +360,14 @@ impl<'a> HIRAssign<'a> {
                 if loc.r#type() != Type::Int {
                     Err(vec![IncNonInt(lhs_span)])
                 } else {
-                    Ok(Self { lhs: loc.clone(), rhs: HIRExpr::Arith { op: Add, lhs: Box::new(loc.into()), rhs: Box::new(HIRLiteral::from(1).into()) }})
+                    Ok(Self { lhs: loc.clone(), rhs: AssignOp::AddAssign(HIRExpr::Literal(1.into())) })
                 }
             },
             Dec => {
                 if loc.r#type() != Type::Int {
                     Err(vec![DecNonInt(lhs_span)])
                 } else {
-                    Ok(Self { lhs: loc.clone(), rhs: HIRExpr::Arith { op: Sub, lhs: Box::new(loc.into()), rhs: Box::new(HIRLiteral::from(1).into()) }})
+                    Ok(Self { lhs: loc.clone(), rhs: AssignOp::SubAssign(HIRExpr::Literal(1.into())) })
                 }
             },
             Assign(expr) => {
@@ -376,7 +375,7 @@ impl<'a> HIRAssign<'a> {
                 if rhs.r#type() != loc.r#type() {
                     Err(vec![AssignOfDifferentType{ lhs: lhs_span, ltype: loc.r#type(), rtype: rhs.r#type() }])
                 } else {
-                    Ok(Self { lhs: loc, rhs })
+                    Ok(Self { lhs: loc, rhs: AssignOp::Assign(rhs) })
                 }
             }
             AddAssign(expr) => {
@@ -387,7 +386,7 @@ impl<'a> HIRAssign<'a> {
                 } else if loc.r#type() != Type::Int {
                     Err(vec![ExpectedIntExpr(lhs_span)])
                 } else {
-                    Ok(Self { lhs: loc.clone(), rhs: HIRExpr::Arith { op: Add, lhs: Box::new(loc.into()), rhs: Box::new(rhs) }})
+                    Ok(Self { lhs: loc.clone(), rhs: AssignOp::AddAssign(rhs) })
                 }
             }
             SubAssign(expr) => {
@@ -398,7 +397,7 @@ impl<'a> HIRAssign<'a> {
                 } else if loc.r#type() != Type::Int {
                     Err(vec![ExpectedIntExpr(lhs_span)])
                 } else {
-                    Ok(Self { lhs: loc.clone(), rhs: HIRExpr::Arith { op: Sub, lhs: Box::new(loc.into()), rhs: Box::new(rhs) }})
+                    Ok(Self { lhs: loc, rhs: AssignOp::SubAssign(rhs) })
                 }
             }
         }
