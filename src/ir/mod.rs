@@ -88,6 +88,18 @@ mod basicblock {
         metadata: BBMetaData,
     }
 
+    impl<'b, const N: usize> From<&[Instruction<'b>; N]> for BasicBlock<'b> {
+        fn from(value: &[Instruction<'b>; N]) -> Self {
+            BasicBlock::new(BBMetaData::default(), value)
+        }
+    }
+
+    impl<'b> From<&[Instruction<'b>]> for BasicBlock<'b> {
+        fn from(value: &[Instruction<'b>]) -> Self {
+            BasicBlock::new(BBMetaData::default(), value)
+        }
+    }
+
     impl<'b> BasicBlock<'b> {
         pub(super) fn terminator(&self) -> Option<&Terminator<'b>> {
             self.terminator.as_ref()
@@ -833,6 +845,12 @@ mod ccfg {
         _marker: Marker<&'b BasicBlock<'b>>,
     }
 
+    impl<'a> From<BasicBlock<'a>> for CCfg<'a> {
+        fn from(value: BasicBlock<'a>) -> Self {
+            CCfg::new(Box::new(value))
+        }
+    }
+
     pub struct LoopExit<'b> {
         r#continue: CCfg<'b>,
         r#break: CCfg<'b>,
@@ -1093,23 +1111,18 @@ mod destruct {
                 HIRExpr::Len(size) => {
                     let res = reg_allocator.alloc_ssa();
                     (
-                        CCfg::new(Box::new(BasicBlock::new(
-                            BBMetaData::new(None),
-                            &[Instruction::new_load(
-                                res,
-                                Immediate::Int(size.get() as i64),
-                            )],
-                        ))),
+                        BasicBlock::from(&[Instruction::new_load(
+                            res,
+                            Immediate::Int(size.get() as i64),
+                        )])
+                        .into(),
                         res,
                     )
                 }
                 HIRExpr::Loc(loc) => {
                     let (mut ccfg, loc) = loc.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
-                    let assign = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_load(res, loc)],
-                    )));
+                    let assign = BasicBlock::from(&[Instruction::new_load(res, loc)]).into();
                     ccfg.append(assign);
                     (ccfg, res)
                 }
@@ -1117,10 +1130,8 @@ mod destruct {
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
-                    let equ = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_arith(res, lhs, *op, rhs)],
-                    )));
+                    let equ =
+                        BasicBlock::from(&[Instruction::new_arith(res, lhs, *op, rhs)]).into();
                     ccfg_lhs.append(ccfg_rhs).append(equ);
                     (ccfg_lhs, res)
                 }
@@ -1129,70 +1140,51 @@ mod destruct {
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
-                    let equ = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_rel(res, lhs, *op, rhs)],
-                    )));
-                    ccfg_lhs.append(ccfg_rhs).append(equ);
+                    let equ = BasicBlock::from(&[Instruction::new_rel(res, lhs, *op, rhs)]);
+                    ccfg_lhs.append(ccfg_rhs).append(equ.into());
                     (ccfg_lhs, res)
                 }
                 Eq { op, lhs, rhs } => {
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
-                    let equ = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_eq(res, lhs, *op, rhs)],
-                    )));
-                    ccfg_lhs.append(ccfg_rhs).append(equ);
+                    let equ = BasicBlock::from(&[Instruction::new_eq(res, lhs, *op, rhs)]);
+                    ccfg_lhs.append(ccfg_rhs).append(equ.into());
                     (ccfg_lhs, res)
                 }
                 Neg(e) => {
                     let (mut ccfg, res_neg) = e.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
-                    let bb = BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_neg(res, res_neg)],
-                    );
-                    ccfg.append(CCfg::new(Box::new(bb)));
+                    let bb = BasicBlock::from(&[Instruction::new_neg(res, res_neg)]);
+                    ccfg.append(bb.into());
                     (ccfg, res)
                 }
                 Not(e) => {
                     let (mut ccfg, res_not) = e.destruct(reg_allocator, mangler, func_name);
                     let res = reg_allocator.alloc_ssa();
-                    let bb = BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_not(res, res_not)],
-                    );
-                    ccfg.append(CCfg::new(Box::new(bb)));
+                    let bb = BasicBlock::from(&[Instruction::new_not(res, res_not)]);
+                    ccfg.append(bb.into());
                     (ccfg, res)
                 }
                 Ter { cond, yes, no } => {
                     let res = mangler.cook_var();
                     let (mut ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
-                    ccfg_cond.append(CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::AllocScalar { name: res }],
-                    ))));
+                    ccfg_cond
+                        .append(BasicBlock::from(&[Instruction::AllocScalar { name: res }]).into());
                     let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler, func_name);
-                    ccfg_yes.append(CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(res, yes)],
-                    ))));
+
+                    ccfg_yes.append(BasicBlock::from(&[Instruction::new_store(res, yes)]).into());
                     let (mut ccfg_no, no) = no.destruct(reg_allocator, mangler, func_name);
-                    ccfg_no.append(CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(res, no)],
-                    ))));
+
+                    ccfg_no.append(BasicBlock::from(&[Instruction::new_store(res, no)]).into());
                     ccfg_cond.append_cond(cond, ccfg_yes, ccfg_no);
+
                     let res_reg = reg_allocator.alloc_ssa();
-                    let assign = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_load(res_reg, res)],
-                    )));
-                    ccfg_cond.append(assign);
+                    let assign = BasicBlock::from(&[Instruction::new_load(res_reg, res)]);
+                    ccfg_cond.append(assign.into());
                     (ccfg_cond, res_reg)
                 }
+
                 Call(call) => call.destruct_ret(reg_allocator, mangler, func_name),
                 Cond {
                     lhs,
@@ -1200,34 +1192,19 @@ mod destruct {
                     op: CondOp::Or,
                 } => {
                     let sc = mangler.cook_var();
-                    let scbb = Box::new(BasicBlock::new(
-                        BBMetaData::default(),
-                        &[Instruction::AllocScalar { name: sc }],
-                    ));
+                    let scbb = BasicBlock::from(&[Instruction::AllocScalar { name: sc }]);
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
-                    let set_true = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(sc, true)],
-                    )));
-                    let set_false = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(sc, false)],
-                    )));
-                    ccfg_rhs.append_cond(rhs, set_true, set_false);
-                    let set_true = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(sc, true)],
-                    )));
-                    ccfg_lhs.append_cond(lhs, set_true, ccfg_rhs);
-                    let mut beg = CCfg::new(scbb);
+                    let set_true = BasicBlock::from(&[Instruction::new_store(sc, true)]);
+                    let set_false = BasicBlock::from(&[Instruction::new_store(sc, false)]);
+                    ccfg_rhs.append_cond(rhs, set_true.into(), set_false.into());
+                    let set_true = BasicBlock::from(&[Instruction::new_store(sc, true)]);
+                    ccfg_lhs.append_cond(lhs, set_true.into(), ccfg_rhs);
+                    let mut beg: CCfg = scbb.into();
                     beg.append(ccfg_lhs);
                     let res = reg_allocator.alloc_ssa();
-                    let load = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_load(res, sc)],
-                    )));
-                    beg.append(load);
+                    let load = BasicBlock::from(&[Instruction::new_load(res, sc)]);
+                    beg.append(load.into());
                     (beg, res)
                 }
                 Cond {
@@ -1236,27 +1213,15 @@ mod destruct {
                     rhs,
                 } => {
                     let sc = mangler.cook_var();
-                    let scbb = Box::new(BasicBlock::new(
-                        BBMetaData::default(),
-                        &[Instruction::AllocScalar { name: sc }],
-                    ));
+                    let scbb = BasicBlock::from(&[Instruction::AllocScalar { name: sc }]);
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
-                    let set_false = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(sc, false)],
-                    )));
-                    let set_true = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(sc, true)],
-                    )));
-                    ccfg_rhs.append_cond(rhs, set_true, set_false);
-                    let set_false = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_store(sc, false)],
-                    )));
-                    ccfg_lhs.append_cond(lhs, ccfg_rhs, set_false);
-                    let mut beg = CCfg::new(scbb);
+                    let set_false = BasicBlock::from(&[Instruction::new_store(sc, false)]);
+                    let set_true = BasicBlock::from(&[Instruction::new_store(sc, true)]);
+                    ccfg_rhs.append_cond(rhs, set_true.into(), set_false.into());
+                    let set_false = BasicBlock::from(&[Instruction::new_store(sc, false)]);
+                    ccfg_lhs.append_cond(lhs, ccfg_rhs, set_false.into());
+                    let mut beg: CCfg = scbb.into();
                     beg.append(ccfg_lhs);
                     let res = reg_allocator.alloc_ssa();
                     let load = CCfg::new(Box::new(BasicBlock::new(
@@ -1291,11 +1256,8 @@ mod destruct {
                             },
                         );
                     let res = reg_allocator.alloc_ssa();
-                    let call = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_ret_call(res, *name, args)],
-                    )));
-                    ccfg.append(call);
+                    let call = BasicBlock::from(&[Instruction::new_ret_call(res, *name, args)]);
+                    ccfg.append(call.into());
                     (ccfg, res)
                 }
                 HIRCall::Extern { args, name } => {
@@ -1320,11 +1282,8 @@ mod destruct {
                         })
                         .collect();
                     let res = reg_allocator.alloc_ssa();
-                    let call = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[Instruction::new_extern_call(res, *name, args)],
-                    )));
-                    ccfg.append(call);
+                    let call = BasicBlock::from(&[Instruction::new_extern_call(res, *name, args)]);
+                    ccfg.append(call.into());
                     (ccfg, res)
                 }
             }
@@ -1359,15 +1318,11 @@ mod destruct {
 
                 Return(Some(e)) => {
                     let (mut ccfg, res) = e.destruct(reg_allocator, mangler, func_name);
-                    let instruction = Instruction::new_return(res);
-                    let bb = BasicBlock::new(BBMetaData::new(None), &[instruction]);
+                    let bb = BasicBlock::from(&[Instruction::new_return(res)]);
                     ccfg.append(CCfg::new(Box::new(bb)));
                     ccfg
                 }
-                Return(None) => CCfg::new(Box::new(BasicBlock::new(
-                    BBMetaData::new(None),
-                    &[Instruction::new_void_ret()],
-                ))),
+                Return(None) => BasicBlock::from(&[Instruction::new_void_ret()]).into(),
                 If { cond, yes, no } => {
                     let (mut ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
                     let ccfg_yes = yes.destruct(reg_allocator, mangler, loop_exit, func_name);
@@ -1415,46 +1370,36 @@ mod destruct {
                     let less_than_zero = reg_allocator.alloc_ssa();
                     let larger_than_bound = reg_allocator.alloc_ssa();
                     let bound_cond = reg_allocator.alloc_ssa();
-                    let mut bound_check = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[
-                            Instruction::new_rel(
-                                less_than_zero,
-                                index,
-                                RelOp::Less,
-                                Immediate::Int(0),
-                            ),
-                            Instruction::new_rel(
-                                larger_than_bound,
-                                index,
-                                RelOp::GreaterEqual,
-                                Immediate::Int(size.get() as i64),
-                            ),
-                            Instruction::new_cond(
-                                bound_cond,
-                                less_than_zero,
-                                CondOp::Or,
-                                larger_than_bound,
-                            ),
-                        ],
-                    )));
-                    let on_bound_fail = CCfg::new(Box::new(BasicBlock::new(
-                        BBMetaData::new(None),
-                        &[
-                            Instruction::new_extern_call(
-                                reg_allocator.alloc_ssa(),
-                                "printf",
-                                vec![
-                                    IRExternArg::String(
-                                        r#"*** RUNTIME ERROR ***: Array out of Bounds access in method \"%s\"\n"#,
-                                    ),
-                                    IRExternArg::String(func_name),
-                                ],
-                            ),
-                            Instruction::Exit(-1),
-                        ],
-                    )));
-                    bound_check.append_cond(bound_cond, on_bound_fail, CCfg::new_empty());
+                    let mut bound_check: CCfg = BasicBlock::from(&[
+                        Instruction::new_rel(less_than_zero, index, RelOp::Less, Immediate::Int(0)),
+                        Instruction::new_rel(
+                            larger_than_bound,
+                            index,
+                            RelOp::GreaterEqual,
+                            Immediate::Int(size.get() as i64),
+                        ),
+                        Instruction::new_cond(
+                            bound_cond,
+                            less_than_zero,
+                            CondOp::Or,
+                            larger_than_bound,
+                        ),
+                    ])
+                    .into();
+                    let on_bound_fail = BasicBlock::from(&[
+                        Instruction::new_extern_call(
+                            reg_allocator.alloc_ssa(),
+                            "printf",
+                            vec![
+                                IRExternArg::String(
+                                    r#"*** RUNTIME ERROR ***: Array out of Bounds access in method \"%s\"\n"#,
+                                ),
+                                IRExternArg::String(func_name),
+                            ],
+                        ),
+                        Instruction::Exit(-1),
+                    ]);
+                    bound_check.append_cond(bound_cond, on_bound_fail.into(), CCfg::new_empty());
                     index_ccfg.append(bound_check);
                     (
                         index_ccfg,
@@ -1493,15 +1438,12 @@ mod destruct {
         ) -> CCfg<'b> {
             let (mut ccfg_loc, lhs) = self.lhs.destruct(reg_allocator, mangler, func_name);
             let (ccfg, rhs) = self.rhs.destruct(reg_allocator, mangler, func_name);
-            let assign = CCfg::new(Box::new(BasicBlock::new(
-                BBMetaData::new(None),
-                &match self.rhs {
-                    AssignOp::AddAssign(_) => [Instruction::new_arith(lhs, lhs, ArithOp::Add, rhs)],
-                    AssignOp::SubAssign(_) => [Instruction::new_arith(lhs, lhs, ArithOp::Sub, rhs)],
-                    AssignOp::Assign(_) => [Instruction::new_store(lhs, rhs)],
-                },
-            )));
-            ccfg_loc.append(ccfg).append(assign);
+            let assign = BasicBlock::from(&match self.rhs {
+                AssignOp::AddAssign(_) => [Instruction::new_arith(lhs, lhs, ArithOp::Add, rhs)],
+                AssignOp::SubAssign(_) => [Instruction::new_arith(lhs, lhs, ArithOp::Sub, rhs)],
+                AssignOp::Assign(_) => [Instruction::new_store(lhs, rhs)],
+            });
+            ccfg_loc.append(ccfg).append(assign.into());
             ccfg_loc
         }
     }
@@ -1540,10 +1482,7 @@ mod destruct {
                     }
                 })
                 .collect::<Vec<_>>();
-            let mut ccfg = CCfg::new(Box::new(BasicBlock::new(
-                BBMetaData::default(),
-                &stack_allocs,
-            )));
+            let mut ccfg: CCfg = BasicBlock::from(stack_allocs.as_slice()).into();
             for stmt in self.stmts.iter() {
                 let stmt = stmt.destruct(reg_allocator, &mut mangler, loop_exit, func_name);
                 ccfg.append(stmt);
@@ -1558,8 +1497,7 @@ mod destruct {
     impl<'a> HIRFunction<'a> {
         pub fn destruct(&self) -> Function {
             let mut mangler = NameMangler::new(self.args_sorted.iter().map(|name| name.as_str()));
-            let empty = vec![];
-            let mut ccfg = CCfg::new(Box::new(BasicBlock::new(BBMetaData::default(), &empty)));
+            let mut ccfg: CCfg = BasicBlock::from(&[]).into();
             let mut reg_allocator = RegAllocator::new();
             let body =
                 self.body
