@@ -66,13 +66,6 @@ pub enum Source<'b> {
     Symbol(Symbol<'b>),
     Offset(Symbol<'b>, Reg),
     Reg(Reg),
-    Sc(Sc),
-}
-
-impl From<Sc> for Source<'_> {
-    fn from(value: Sc) -> Self {
-        Self::Sc(value)
-    }
 }
 
 impl<'a> From<Symbol<'a>> for Source<'a> {
@@ -99,7 +92,6 @@ impl<'b> Source<'b> {
             Self::Reg(reg) => Some(Dest::Reg(reg)),
             Self::Symbol(s) => Some(Dest::Symbol(s)),
             Self::Offset(s, r) => Some(Dest::Offset(s, r)),
-            Self::Sc(sc) => Some(Dest::Sc(sc)),
             Self::Immediate(_) => None,
         }
     }
@@ -118,7 +110,6 @@ impl Display for Source<'_> {
             Self::Immediate(i) => write!(f, "{i}"),
             Self::Symbol(s) => write!(f, "%{s}"),
             Self::Offset(s, r) => write!(f, "%{s}[{r}]"),
-            Self::Sc(sc) => write!(f, "{sc}"),
             Self::Reg(r) => write!(f, "{r}"),
         }
     }
@@ -180,13 +171,6 @@ pub enum Dest<'b> {
     Symbol(Symbol<'b>),
     Offset(Symbol<'b>, Reg),
     Reg(Reg),
-    Sc(Sc),
-}
-
-impl From<Sc> for Dest<'_> {
-    fn from(value: Sc) -> Self {
-        Self::Sc(value)
-    }
 }
 
 impl<'a> From<Symbol<'a>> for Dest<'a> {
@@ -201,7 +185,6 @@ impl Display for Dest<'_> {
             Self::Symbol(s) => write!(f, "%{s}"),
             Self::Offset(s, r) => write!(f, "%{s}[{r}]"),
             Self::Reg(r) => write!(f, "{r}"),
-            Self::Sc(sc) => write!(f, "{sc}"),
         }
     }
 }
@@ -416,28 +399,8 @@ impl Reg {
     }
 }
 
-/// A short circuit register.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct Sc(u32);
-
-impl Sc {
-    pub(super) fn new(num: u32) -> Self {
-        Self(num)
-    }
-
-    pub fn num(&self) -> u32 {
-        self.0
-    }
-}
-
 impl Display for Reg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "%{}", self.0)
-    }
-}
-
-impl Display for Sc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "%sc{}", self.0)
     }
 }

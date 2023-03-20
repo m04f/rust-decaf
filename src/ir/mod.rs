@@ -26,12 +26,6 @@ mod basicblock {
             reg
         }
 
-        pub fn alloc_sc(&mut self) -> Sc {
-            let reg = Sc::new(self.0);
-            self.0 += 1;
-            reg
-        }
-
         pub fn allocated(self) -> u32 {
             self.0
         }
@@ -983,8 +977,8 @@ mod ccfg {
 }
 
 mod destruct {
-    use std::cell::UnsafeCell;
     use std::collections::HashSet;
+    use std::{cell::UnsafeCell, num::NonZeroU16};
 
     use super::{ccfg::*, IRExternArg, Loc, Program};
     use crate::{
@@ -995,6 +989,7 @@ mod destruct {
     /// A struct that is used to generate unique names for variables. This struct is unsafe +
     /// unsound. although it is wrapped in a safe wrapper for simplicity. so this should never be
     /// exposed to public.
+    /// TODO: rename this.
     struct NameMangler<'p, 'b> {
         /// The id used to generate unique names for each variable. This id starts from 1. zero is
         /// reserved for global variables.
@@ -1007,6 +1002,11 @@ mod destruct {
         parent: Option<&'p Self>,
         /// A pointer to the next id. This is used to generate unique names for each variable.
         next: UnsafeCell<u16>,
+        /// holds the number of fake variables allocated in the stack. The variable starts from id
+        /// 1. This does not collide with actual variables since we use `.__st` as the name of the
+        /// variable (which is illegal). we need to do this since we do not have an `SSA`
+        /// instruction set.
+        cooked_vars: UnsafeCell<NonZeroU16>,
     }
 
     impl<'p, 'b> Drop for NameMangler<'p, 'b> {
@@ -1014,6 +1014,7 @@ mod destruct {
             if let Some(parent) = self.parent.as_mut() {
                 unsafe {
                     *parent.next.get() = *self.next.get();
+                    *parent.cooked_vars.get() = *self.cooked_vars.get();
                 }
             }
         }
@@ -1031,6 +1032,7 @@ mod destruct {
             unsafe {
                 let next = *self.next.get() + 1;
                 Self {
+                    cooked_vars: UnsafeCell::new(*self.cooked_vars.get()),
                     id: *self.next.get(),
                     names: names.into_iter().collect(),
                     parent: Some(self),
@@ -1041,6 +1043,7 @@ mod destruct {
 
         pub fn new(names: impl IntoIterator<Item = &'b str>) -> Self {
             Self {
+                cooked_vars: UnsafeCell::new(NonZeroU16::new(1).unwrap()),
                 // id 0 is reserved for global variables
                 id: 1,
                 names: names.into_iter().collect(),
@@ -1060,13 +1063,22 @@ mod destruct {
                     .unwrap_or(Symbol(name, 0))
             }
         }
+
+        fn cook_var(&mut self) -> Symbol<'b> {
+            unsafe {
+                // we use an illegal symbol name to avoid collisions with actual variables.
+                let sym = Symbol(".__st", (*self.cooked_vars.get()).get());
+                *self.cooked_vars.get() = (*self.cooked_vars.get()).checked_add(1).unwrap();
+                sym
+            }
+        }
     }
 
     impl<'b> HIRExpr<'b> {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             func_name: &'b str,
         ) -> (CCfg<'b>, Reg) {
             use HIRExpr::*;
@@ -1156,16 +1168,30 @@ mod destruct {
                     (ccfg, res)
                 }
                 Ter { cond, yes, no } => {
-                    let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler, func_name);
-                    let (ccfg_no, no) = no.destruct(reg_allocator, mangler, func_name);
-                    let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
-                    let res = reg_allocator.alloc_ssa();
-                    let select = CCfg::new(Box::new(BasicBlock::new(
+                    let res = mangler.cook_var();
+                    let (mut ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
+                    ccfg_cond.append(CCfg::new(Box::new(BasicBlock::new(
                         BBMetaData::new(None),
-                        &[Instruction::new_select(res, cond, yes, no)],
+                        &[Instruction::AllocScalar { name: res }],
+                    ))));
+                    let (mut ccfg_yes, yes) = yes.destruct(reg_allocator, mangler, func_name);
+                    ccfg_yes.append(CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(res, yes)],
+                    ))));
+                    let (mut ccfg_no, no) = no.destruct(reg_allocator, mangler, func_name);
+                    ccfg_no.append(CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_store(res, no)],
+                    ))));
+                    ccfg_cond.append_cond(cond, ccfg_yes, ccfg_no);
+                    let res_reg = reg_allocator.alloc_ssa();
+                    let assign = CCfg::new(Box::new(BasicBlock::new(
+                        BBMetaData::new(None),
+                        &[Instruction::new_load(res_reg, res)],
                     )));
-                    ccfg_yes.append(ccfg_no).append(ccfg_cond).append(select);
-                    (ccfg_yes, res)
+                    ccfg_cond.append(assign);
+                    (ccfg_cond, res_reg)
                 }
                 Call(call) => call.destruct_ret(reg_allocator, mangler, func_name),
                 Cond {
@@ -1173,8 +1199,11 @@ mod destruct {
                     rhs,
                     op: CondOp::Or,
                 } => {
-                    let scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
-                    let sc = reg_allocator.alloc_sc();
+                    let sc = mangler.cook_var();
+                    let scbb = Box::new(BasicBlock::new(
+                        BBMetaData::default(),
+                        &[Instruction::AllocScalar { name: sc }],
+                    ));
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let set_true = CCfg::new(Box::new(BasicBlock::new(
@@ -1206,8 +1235,11 @@ mod destruct {
                     lhs,
                     rhs,
                 } => {
-                    let scbb = Box::new(BasicBlock::new(BBMetaData::default(), &[]));
-                    let sc = reg_allocator.alloc_sc();
+                    let sc = mangler.cook_var();
+                    let scbb = Box::new(BasicBlock::new(
+                        BBMetaData::default(),
+                        &[Instruction::AllocScalar { name: sc }],
+                    ));
                     let (mut ccfg_lhs, lhs) = lhs.destruct(reg_allocator, mangler, func_name);
                     let (mut ccfg_rhs, rhs) = rhs.destruct(reg_allocator, mangler, func_name);
                     let set_false = CCfg::new(Box::new(BasicBlock::new(
@@ -1242,7 +1274,7 @@ mod destruct {
         fn destruct_ret(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             func_name: &'b str,
         ) -> (CCfg<'b>, Reg) {
             match self {
@@ -1303,7 +1335,7 @@ mod destruct {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             loop_exit: Option<&LoopExit<'b>>,
             func_name: &'b str,
         ) -> CCfg<'b> {
@@ -1374,7 +1406,7 @@ mod destruct {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             func_name: &'b str,
         ) -> (CCfg<'b>, Loc<'b>) {
             match &self {
@@ -1441,7 +1473,7 @@ mod destruct {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             func_name: &'b str,
         ) -> (CCfg<'b>, Reg) {
             match self {
@@ -1456,7 +1488,7 @@ mod destruct {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             func_name: &'b str,
         ) -> CCfg<'b> {
             let (mut ccfg_loc, lhs) = self.lhs.destruct(reg_allocator, mangler, func_name);
@@ -1478,11 +1510,11 @@ mod destruct {
         fn destruct(
             &self,
             reg_allocator: &mut RegAllocator,
-            mangler: &NameMangler<'_, 'b>,
+            mangler: &mut NameMangler<'_, 'b>,
             loop_exit: Option<&LoopExit<'b>>,
             func_name: &'b str,
         ) -> CCfg<'b> {
-            let mangler = mangler.nest(self.decls().keys().map(|span| span.as_str()));
+            let mut mangler = mangler.nest(self.decls().keys().map(|span| span.as_str()));
             let stack_allocs = self
                 .decls()
                 .values()
@@ -1513,7 +1545,7 @@ mod destruct {
                 &stack_allocs,
             )));
             for stmt in self.stmts.iter() {
-                let stmt = stmt.destruct(reg_allocator, &mangler, loop_exit, func_name);
+                let stmt = stmt.destruct(reg_allocator, &mut mangler, loop_exit, func_name);
                 ccfg.append(stmt);
                 if !ccfg.can_append() {
                     break;
@@ -1525,13 +1557,13 @@ mod destruct {
 
     impl<'a> HIRFunction<'a> {
         pub fn destruct(&self) -> Function {
-            let mangler = NameMangler::new(self.args_sorted.iter().map(|name| name.as_str()));
+            let mut mangler = NameMangler::new(self.args_sorted.iter().map(|name| name.as_str()));
             let empty = vec![];
             let mut ccfg = CCfg::new(Box::new(BasicBlock::new(BBMetaData::default(), &empty)));
             let mut reg_allocator = RegAllocator::new();
-            let body = self
-                .body
-                .destruct(&mut reg_allocator, &mangler, None, self.name.as_str());
+            let body =
+                self.body
+                    .destruct(&mut reg_allocator, &mut mangler, None, self.name.as_str());
             ccfg.append(body);
             let graph = ccfg.build_graph();
 

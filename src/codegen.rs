@@ -601,13 +601,6 @@ impl<'a> IRSource<'a> {
                 ))));
                 false
             }
-            IRSource::Sc(reg) => {
-                section.add_instruction(Instruction::Mov(SourceDest::from((
-                    reg_to_stack(reg.num()),
-                    dest,
-                ))));
-                false
-            }
             &IRSource::Offset(sym, reg) => {
                 section
                     .add_instruction(Leaq(symbol_to_mem(sym), dest))
@@ -650,13 +643,6 @@ impl<'a> IRDest<'a> {
         let mut reg_to_stack = |reg: u32| MemVar::Stack(reg_to_stack(reg));
         match self {
             IRDest::Reg(reg) => {
-                section.add_instruction(Instruction::Mov(SourceDest::from((
-                    source,
-                    reg_to_stack(reg.num()),
-                ))));
-                false
-            }
-            IRDest::Sc(reg) => {
                 section.add_instruction(Instruction::Mov(SourceDest::from((
                     source,
                     reg_to_stack(reg.num()),
