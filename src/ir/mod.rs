@@ -842,6 +842,7 @@ mod ccfg {
     pub struct LoopExit<'b> {
         r#continue: CCfg<'b>,
         r#break: CCfg<'b>,
+        update: Option<CCfg<'b>>,
         cond: Reg,
     }
 
@@ -850,17 +851,23 @@ mod ccfg {
 
     impl<'b> LoopExit<'b> {
         pub fn r#continue(&self) -> Continue<'b> {
-            Continue(self.r#continue.beg)
+            self.update
+                .as_ref()
+                .map_or(Continue(self.r#continue.beg), |update| Continue(update.beg))
         }
 
         pub fn r#break(&self) -> Break<'b> {
             Break(self.r#break.beg)
         }
 
-        pub fn new(r#continue: CCfg<'b>, cond: Reg) -> LoopExit<'b> {
+        pub fn new(r#continue: CCfg<'b>, cond: Reg, mut update: Option<CCfg<'b>>) -> LoopExit<'b> {
+            if let Some(update) = update.as_mut() {
+                update.try_append_continue(Continue(r#continue.beg));
+            }
             LoopExit {
                 r#continue,
                 r#break: CCfg::new_empty(),
+                update,
                 cond,
             }
         }
@@ -1350,7 +1357,7 @@ mod destruct {
                 }
                 While { cond, body } => {
                     let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
-                    let loop_exit = LoopExit::new(ccfg_cond, cond);
+                    let loop_exit = LoopExit::new(ccfg_cond, cond, None);
                     let body = body.destruct(reg_allocator, mangler, Some(&loop_exit), func_name);
                     loop_exit.build(body)
                 }
@@ -1362,12 +1369,10 @@ mod destruct {
                 } => {
                     let mut init = init.destruct(reg_allocator, mangler, func_name);
                     let (ccfg_cond, cond) = cond.destruct(reg_allocator, mangler, func_name);
-                    let loop_exit = LoopExit::new(ccfg_cond, cond);
-
                     let update = update.destruct(reg_allocator, mangler, func_name);
-                    let mut body =
-                        body.destruct(reg_allocator, mangler, Some(&loop_exit), func_name);
-                    body.append_if_possible(update);
+                    let loop_exit = LoopExit::new(ccfg_cond, cond, Some(update));
+
+                    let body = body.destruct(reg_allocator, mangler, Some(&loop_exit), func_name);
                     let r#loop = loop_exit.build(body);
 
                     init.append(r#loop);
