@@ -239,7 +239,9 @@ impl Debug for IRExternArg<'_> {
 #[derive(Clone)]
 pub enum Instruction<'b> {
     AllocArray { name: Symbol<'b>, size: NonZeroU32 },
+    InitArray { name: Symbol<'b>, size: NonZeroU32 },
     AllocScalar { name: Symbol<'b> },
+    InitSymbol{ name: Symbol<'b> },
     Op2 { dest: Dest<'b>, lhs: Source<'b>, rhs: Source<'b>, op: Op },
     Unary { dest: Dest<'b>, source: Source<'b>, op: Unary },
     Move { dest: Dest<'b>, source: Source<'b> },
@@ -258,6 +260,8 @@ impl Debug for Instruction<'_> {
             Self::Op2 { dest, lhs, rhs, op } => write!(f, "{dest} = {op:?} {lhs} {rhs}"),
             Self::AllocArray { name, size } => write!(f, "alloc {name}[{size}]"),
             Self::AllocScalar { name } => write!(f, "alloc {name}"),
+            Self::InitArray { name, size } => write!(f, "init {name}[{size}]"),
+            Self::InitSymbol { name } => write!(f, "init {name}"),
             Self::Move { dest, source } => write!(f, "{dest} = {source}"),
             Self::Unary { dest, source, op } => write!(f, "{dest} = {op:?} {source}"),
             Self::Exit(code) => write!(f, "exit {code}"),
@@ -360,7 +364,12 @@ impl<'b> Instruction<'b> {
             op: Unary::Not,
         }
     }
-    pub fn new_arith(dest: Reg, lhs: Reg, op: ArithOp, rhs: Reg) -> Self {
+    pub fn new_arith(
+        dest: impl Into<Dest<'b>>,
+        lhs: impl Into<Source<'b>>,
+        op: ArithOp,
+        rhs: impl Into<Source<'b>>,
+    ) -> Self {
         Self::Op2 {
             dest: dest.into(),
             lhs: lhs.into(),

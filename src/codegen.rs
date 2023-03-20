@@ -698,6 +698,25 @@ impl<'a> IRInstruction<'a> {
         use Instruction::*;
         match &self {
             Self::AllocArray { .. } | Self::AllocScalar { .. } => {}
+            Self::InitSymbol { name } => {
+                section
+                    .add_instruction(Instruction::Mov(SourceDest::from((0, R10))))
+                    .add_instruction(Instruction::Mov(SourceDest::from((
+                        R10,
+                        symbol_to_mem(*name),
+                    ))));
+            }
+            Self::InitArray { name, size } => {
+                section
+                    .add_instruction(Instruction::Leaq(symbol_to_mem(*name), ARG_REGISTERS[0]))
+                    .add_instruction(Instruction::Mov(SourceDest::from((0, ARG_REGISTERS[1]))))
+                    .add_instruction(Instruction::Mov(SourceDest::from((
+                        size.get() as i64 * 8,
+                        ARG_REGISTERS[2],
+                    ))))
+                    .add_instruction(Instruction::Mov(SourceDest::from((0, Rax))))
+                    .add_instruction(Instruction::Call("memset"));
+            }
             Self::Move { dest, source } => {
                 source.move_to_reg(R10, R11, &mut symbol_to_mem, &mut reg_to_stack, section);
                 dest.assign(

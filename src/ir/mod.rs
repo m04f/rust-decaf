@@ -904,18 +904,6 @@ mod ccfg {
             graph
         }
 
-        pub fn append_if_possible(&mut self, other: Self) -> &mut Self {
-            unsafe {
-                if let Some(end) = self.end {
-                    (*end.as_ptr()).link_unconditional(other.beg);
-                    self.end = other.end;
-                    self
-                } else {
-                    self
-                }
-            }
-        }
-
         pub fn append(&mut self, other: Self) -> &mut Self {
             unsafe {
                 if let Some(end) = self.end {
@@ -1498,16 +1486,25 @@ mod destruct {
             let stack_allocs = self
                 .decls()
                 .values()
-                .map(|decl| {
+                .flat_map(|decl| {
                     if decl.is_scalar() {
-                        Instruction::AllocScalar {
-                            name: mangler.mangle(decl.name().as_str()),
-                        }
+                        let scalar = mangler.mangle(decl.name().as_str());
+                        [
+                            Instruction::AllocScalar { name: scalar },
+                            Instruction::InitSymbol { name: scalar },
+                        ]
                     } else {
-                        Instruction::AllocArray {
-                            name: mangler.mangle(decl.name().as_str()),
-                            size: decl.array_len().unwrap(),
-                        }
+                        let name = mangler.mangle(decl.name().as_str());
+                        [
+                            Instruction::AllocArray {
+                                name,
+                                size: decl.array_len().unwrap(),
+                            },
+                            Instruction::InitArray {
+                                name,
+                                size: decl.array_len().unwrap(),
+                            },
+                        ]
                     }
                 })
                 .collect::<Vec<_>>();
