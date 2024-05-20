@@ -250,10 +250,6 @@ impl HIRExpr {
         Self::Neg(Box::new(self))
     }
 
-    pub fn nested(self) -> Self {
-        self
-    }
-
     pub fn is_boolean(&self) -> bool {
         self.r#type() == Type::Bool
     }

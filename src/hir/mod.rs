@@ -35,9 +35,7 @@ impl HIRExpr {
             }
             Neg(span, e) => {
                 if let Literal { value, .. } = *e {
-                    {
-                        HIRLiteral::from_pliteral(value, true).map(|value| value.into())
-                    }
+                    HIRLiteral::from_pliteral(value, true).map(|value| value.into())
                 } else {
                     let e = Self::from_pexpr(*e, vst, fst)?;
                     e.is_int()
@@ -45,10 +43,8 @@ impl HIRExpr {
                         .ok_or(vec![ExpectedIntExpr(span)])
                 }
             }
-            Nested(_, e) => {
-                let e = Self::from_pexpr(*e, vst, fst)?;
-                Ok(e.nested())
-            }
+            Nested(_, e) => Self::from_pexpr(*e, vst, fst),
+
             Index { name, offset, span } => match vst.get_sym(name) {
                 None => Err(vec![UndeclaredIdentifier(name)]),
                 Some(HIRVar::Scalar { .. }) => Err(vec![ExpectedArray(name)]),
@@ -66,9 +62,7 @@ impl HIRExpr {
                 _ => Err(vec![ExpectedScalarVariable(ident)]),
             },
             Ter { cond, yes, no, .. } => {
-                let cond_span = cond.span();
-                let yes_span = yes.span();
-                let no_span = no.span();
+                let (cond_span, yes_span, no_span) = (cond.span(), yes.span(), no.span());
                 let cond = Self::from_pexpr(*cond, vst, fst);
                 let yes = Self::from_pexpr(*yes, vst, fst);
                 let no = Self::from_pexpr(*no, vst, fst);
