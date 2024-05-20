@@ -3,7 +3,7 @@ use crate::{error::*, parser::ast::Type, span::*};
 #[derive(Debug)]
 pub enum Error<'a> {
     UndeclaredIdentifier(Span<'a>),
-    ExpectedArrayVariable(Span<'a>),
+    ExpectedArray(Span<'a>),
     ExpectedScalarVariable(Span<'a>),
     CannotIndexScalar(Span<'a>),
     CannotAssignToArray(Span<'a>),
@@ -82,7 +82,7 @@ impl CCError for Error<'_> {
                 format!("Undeclared identifier `{}`", span.to_string()),
                 span.position(),
             )],
-            Self::ExpectedArrayVariable(span) => vec![(
+            Self::ExpectedArray(span) => vec![(
                 format!("Expected array variable, found `{}`", span.to_string()),
                 span.position(),
             )],

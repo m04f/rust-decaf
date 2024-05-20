@@ -23,17 +23,15 @@ impl HIRExpr {
             Len { id, .. } => match vst.get_sym(id) {
                 None => Err(vec![UndeclaredIdentifier(id)]),
                 Some(var) => match var {
-                    HIRVar::Scalar { .. } => Err(vec![ExpectedArrayVariable(id)]),
+                    HIRVar::Scalar { .. } => Err(vec![ExpectedArray(id)]),
                     HIRVar::Array { size, .. } => Ok(Self::Len(*size)),
                 },
             },
             Not(span, e) => {
                 let e = Self::from_pexpr(*e, vst, fst)?;
-                if !e.is_boolean() {
-                    Err(vec![ExpectedBoolExpr(span)])
-                } else {
-                    Ok(e.new_not())
-                }
+                e.is_boolean()
+                    .then(|| HIRExpr::Not(Box::new(e)))
+                    .ok_or(vec![ExpectedBoolExpr(span)])
             }
             Neg(span, e) => {
                 if let Literal { value, .. } = *e {
@@ -42,11 +40,9 @@ impl HIRExpr {
                     }
                 } else {
                     let e = Self::from_pexpr(*e, vst, fst)?;
-                    if !e.is_int() {
-                        Err(vec![ExpectedIntExpr(span)])
-                    } else {
-                        Ok(Self::new_neg(e))
-                    }
+                    e.is_int()
+                        .then(|| HIRExpr::Neg(Box::new(e)))
+                        .ok_or(vec![ExpectedIntExpr(span)])
                 }
             }
             Nested(_, e) => {
@@ -55,14 +51,13 @@ impl HIRExpr {
             }
             Index { name, offset, span } => match vst.get_sym(name) {
                 None => Err(vec![UndeclaredIdentifier(name)]),
-                Some(HIRVar::Scalar { .. }) => Err(vec![ExpectedArrayVariable(name)]),
+                Some(HIRVar::Scalar { .. }) => Err(vec![ExpectedArray(name)]),
                 Some(var) => {
                     let offset = Self::from_pexpr(*offset, vst, fst)?;
-                    if !offset.is_int() {
-                        Err(vec![ExpectedIntExpr(span)])
-                    } else {
-                        Ok(HIRLoc::index(var.clone(), offset).into())
-                    }
+                    offset
+                        .is_int()
+                        .then(|| HIRLoc::index(var.clone(), offset).into())
+                        .ok_or(vec![ExpectedIntExpr(span)])
                 }
             },
             Scalar(ident) => match vst.get_sym(ident) {
@@ -722,13 +717,13 @@ impl HIRFunction {
 impl HIRRoot {
     pub fn from_proot<'a>(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
         let redefs = get_redefs(
-            root
-            .imports
-            .iter()
-            .map(|f| f.name())
-            .chain(root.decls.iter().map(|v| v.name()))
-            .chain(root.funcs.iter().map(|f| f.name()))
-        ).unwrap_or(vec![]);
+            root.imports
+                .iter()
+                .map(|f| f.name())
+                .chain(root.decls.iter().map(|v| v.name()))
+                .chain(root.funcs.iter().map(|f| f.name())),
+        )
+        .unwrap_or(vec![]);
         let mut errors = redefs;
         if let Some(main) = root.funcs.iter().find(|f| f.name.as_str() == "main") {
             if !(main.args.is_empty() && main.ret.is_none()) {
