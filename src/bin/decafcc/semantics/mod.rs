@@ -12,7 +12,7 @@ impl App for Semantics {
         input_file: String,
     ) -> crate::ExitStatus {
         let text = read_to_string(&input_file).unwrap();
-        let code = SpanSource::new(text.as_bytes());
+        let code = SpanSource::new(&text);
         let mut parser =
             dcfrs::parser::Parser::new(tokens(code.source()).map(|s| s.map(|t| t.unwrap())), |e| {
                 ewrite(stderr, &input_file, e).unwrap();
@@ -20,7 +20,10 @@ impl App for Semantics {
         let proot = parser.doc_elems().collect();
         let hirtree = HIRRoot::from_proot(proot);
         match hirtree {
-            Ok(_) => crate::ExitStatus::Success,
+            Ok(_) => {
+                println!("{hirtree:#?}");
+                crate::ExitStatus::Success
+            }
             Err(errs) => {
                 errs.into_iter()
                     .try_for_each(|err| ewrite(stderr, &input_file, err))

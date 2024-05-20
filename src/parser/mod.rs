@@ -105,7 +105,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Error<'a>)> Parser<'a
         span.into_spanned(tok)
     }
 
-    fn ident(&mut self) -> Result<PIdentifier<'a>> {
+    fn ident(&mut self) -> Result<Span<'a>> {
         match self.peek() {
             Token::Identifier => Ok(self.bump().span().into()),
             _ => Err(Clean),
@@ -409,7 +409,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Error<'a>)> Parser<'a
                     Token::SquareLeft => {
                         let var = self
                             .opt_size()
-                            .map(|size| PVar::new(ty, ident, size, self.end_span(ident.span())))
+                            .map(|size| PVar::new(ty, ident, size, self.end_span(ident)))
                             .unwrap_or_else(|_| PVar::scalar(ty, ident));
                         if self.peek() == Token::Comma {
                             vars_after_comma(self, ty, var)
@@ -476,7 +476,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Error<'a>)> Parser<'a
         }
     }
 
-    fn char_literal(&mut self) -> Result<Spanned<'a, u8>> {
+    fn char_literal(&mut self) -> Result<Spanned<'a, char>> {
         match self.peek() {
             Token::CharLiteral(c) => Ok(self.bump().map(|_| c)),
             _ => Err(Clean),

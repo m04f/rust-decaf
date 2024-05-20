@@ -17,29 +17,14 @@ impl Display for Type {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PIdentifier<'a>(Span<'a>);
-
-impl<'a> PIdentifier<'a> {
-    pub fn span(&self) -> Span<'a> {
-        self.0
-    }
-}
-
-impl<'a> From<Span<'a>> for PIdentifier<'a> {
-    fn from(value: Span<'a>) -> Self {
-        Self(value)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct PImport<'a> {
     span: Span<'a>,
-    id: PIdentifier<'a>,
+    id: Span<'a>,
 }
 
 impl<'a> PImport<'a> {
-    pub fn name(&self) -> PIdentifier<'a> {
+    pub fn name(&self) -> Span<'a> {
         self.id
     }
     pub fn span(&self) -> Span<'a> {
@@ -47,8 +32,8 @@ impl<'a> PImport<'a> {
     }
 }
 
-impl<'a> From<Spanned<'a, PIdentifier<'a>>> for PImport<'a> {
-    fn from(value: Spanned<'a, PIdentifier<'a>>) -> Self {
+impl<'a> From<Spanned<'a, Span<'a>>> for PImport<'a> {
+    fn from(value: Spanned<'a, Span<'a>>) -> Self {
         let (ident, span) = value.into_parts();
         Self { span, id: ident }
     }
@@ -213,12 +198,12 @@ impl<'a> Default for PBlock<'a> {
 pub enum PLiteral<'a> {
     Decimal(Span<'a>),
     Hex(Span<'a>),
-    Char(u8),
+    Char(char),
     Bool(bool),
 }
 
-impl From<u8> for PLiteral<'_> {
-    fn from(value: u8) -> Self {
+impl From<char> for PLiteral<'_> {
+    fn from(value: char) -> Self {
         Self::Char(value)
     }
 }
@@ -240,7 +225,10 @@ impl<'a> PLiteral<'a> {
 
 #[derive(Debug, Clone)]
 pub enum PExpr<'a> {
-    Len(Span<'a>, PIdentifier<'a>),
+    Len {
+        span: Span<'a>,
+        id: Span<'a>,
+    },
     Nested(Span<'a>, Box<PExpr<'a>>),
     Not(Span<'a>, Box<PExpr<'a>>),
     Neg(Span<'a>, Box<PExpr<'a>>),
@@ -252,12 +240,12 @@ pub enum PExpr<'a> {
     },
     Call(PCall<'a>),
     Index {
-        name: PIdentifier<'a>,
+        name: Span<'a>,
         offset: Box<PExpr<'a>>,
         span: Span<'a>,
     },
 
-    Scalar(PIdentifier<'a>),
+    Scalar(Span<'a>),
     Literal {
         span: Span<'a>,
         value: PLiteral<'a>,
@@ -277,8 +265,8 @@ impl<'a> From<Spanned<'a, PLiteral<'a>>> for PExpr<'a> {
     }
 }
 
-impl<'a> From<Spanned<'a, u8>> for PExpr<'a> {
-    fn from(value: Spanned<'a, u8>) -> Self {
+impl<'a> From<Spanned<'a, char>> for PExpr<'a> {
+    fn from(value: Spanned<'a, char>) -> Self {
         let (value, span) = value.into_parts();
         Self::Literal {
             span,
@@ -311,9 +299,9 @@ impl<'a> From<PLoc<'a>> for PExpr<'a> {
 }
 
 impl<'a> PExpr<'a> {
-    pub fn new_len(ident: Spanned<'a, PIdentifier<'a>>) -> Self {
+    pub fn new_len(ident: Spanned<'a, Span<'a>>) -> Self {
         let (id, span) = ident.into_parts();
-        Self::Len(span, id)
+        Self::Len { span, id }
     }
     pub fn new_neg(expr: Spanned<'a, PExpr<'a>>) -> Self {
         let (expr, span) = expr.into_parts();
@@ -351,12 +339,12 @@ impl<'a> PExpr<'a> {
     }
     pub fn span(&self) -> Span<'a> {
         match self {
-            Self::Len(span, _)
+            Self::Len { span, .. }
             | Self::Not(span, _)
             | Self::Neg(span, _)
             | Self::Literal { span, .. } => *span,
             Self::Nested(span, _) => *span,
-            Self::Scalar(ident) => ident.span(),
+            Self::Scalar(ident) => *ident,
             Self::Ter { span, .. } => *span,
             Self::Call(call) => call.span(),
             Self::Index { span, .. } => *span,
@@ -472,22 +460,22 @@ impl<'a> PStmt<'a> {
 pub enum PVar<'a> {
     Array {
         ty: Type,
-        ident: PIdentifier<'a>,
+        ident: Span<'a>,
         size: PIntLiteral<'a>,
         // we do not need to record spans for identifiers
         span: Span<'a>,
     },
     Scalar {
         ty: Type,
-        ident: PIdentifier<'a>,
+        ident: Span<'a>,
     },
 }
 
 impl<'a> PVar<'a> {
     pub fn name(&self) -> Span<'a> {
         match self {
-            Self::Array { ident, .. } => ident.span(),
-            Self::Scalar { ident, .. } => ident.span(),
+            Self::Array { ident, .. } => *ident,
+            Self::Scalar { ident, .. } => *ident,
         }
     }
     pub fn r#type(&self) -> Type {
@@ -496,18 +484,13 @@ impl<'a> PVar<'a> {
             Self::Scalar { ty, .. } => *ty,
         }
     }
-    pub fn span(&self) -> Span {
+    pub fn span(&self) -> Span<'a> {
         match self {
             Self::Array { span, .. } => *span,
-            Self::Scalar { ident, .. } => ident.span(),
+            Self::Scalar { ident, .. } => *ident,
         }
     }
-    pub fn new(
-        ty: Type,
-        ident: PIdentifier<'a>,
-        size: Option<PIntLiteral<'a>>,
-        span: Span<'a>,
-    ) -> Self {
+    pub fn new(ty: Type, ident: Span<'a>, size: Option<PIntLiteral<'a>>, span: Span<'a>) -> Self {
         size.map_or_else(
             || Self::Scalar { ty, ident },
             |size| Self::Array {
@@ -518,32 +501,32 @@ impl<'a> PVar<'a> {
             },
         )
     }
-    pub fn ident(&self) -> PIdentifier<'a> {
+    pub fn ident(&self) -> Span<'a> {
         match self {
             Self::Array { ident, .. } => *ident,
             Self::Scalar { ident, .. } => *ident,
         }
     }
-    pub fn scalar(ty: Type, ident: PIdentifier<'a>) -> Self {
+    pub fn scalar(ty: Type, ident: Span<'a>) -> Self {
         Self::Scalar { ty, ident }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PLoc<'a> {
-    pub ident: PIdentifier<'a>,
+    pub ident: Span<'a>,
     pub offset: Option<PExpr<'a>>,
     span: Span<'a>,
 }
 
 impl<'a> PLoc<'a> {
     pub fn ident(&self) -> Span<'a> {
-        self.ident.span()
+        self.ident
     }
     pub fn span(&self) -> Span<'a> {
         self.span
     }
-    pub fn new(ident: PIdentifier<'a>, offset: Option<PExpr<'a>>, span: Span<'a>) -> Self {
+    pub fn new(ident: Span<'a>, offset: Option<PExpr<'a>>, span: Span<'a>) -> Self {
         Self {
             ident,
             offset,
@@ -554,13 +537,13 @@ impl<'a> PLoc<'a> {
 
 #[derive(Debug, Clone)]
 pub struct PCall<'a> {
-    pub name: PIdentifier<'a>,
+    pub name: Span<'a>,
     pub args: Vec<PArg<'a>>,
     pub span: Span<'a>,
 }
 
 impl<'a> PCall<'a> {
-    pub fn new(name: PIdentifier<'a>, args: Vec<PArg<'a>>, span: Span<'a>) -> Self {
+    pub fn new(name: Span<'a>, args: Vec<PArg<'a>>, span: Span<'a>) -> Self {
         Self { name, args, span }
     }
     pub fn span(&self) -> Span<'a> {
@@ -584,7 +567,7 @@ pub type PArgs<'a> = Vec<PArg<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct PFunction<'a> {
-    pub name: PIdentifier<'a>,
+    pub name: Span<'a>,
     pub body: PBlock<'a>,
     pub args: Vec<PVar<'a>>,
     pub ret: Option<Type>,
@@ -595,9 +578,12 @@ impl<'a> PFunction<'a> {
     pub fn span(&self) -> Span<'a> {
         self.span
     }
+    pub fn name(&self) -> Span<'a> {
+        self.name
+    }
     pub fn new(
         ret: Option<Type>,
-        name: PIdentifier<'a>,
+        name: Span<'a>,
         args: Vec<PVar<'a>>,
         body: PBlock<'a>,
         span: Span<'a>,

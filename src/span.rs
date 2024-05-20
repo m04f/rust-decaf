@@ -1,28 +1,24 @@
 use std::{
     fmt::Debug,
     hash::Hash,
-    iter::Copied,
     ops::{Index, Range, RangeFrom, RangeFull, RangeTo},
     slice,
 };
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SpanSource<'a> {
-    source: &'a [u8],
+    source: &'a str,
     lines: Vec<*const u8>,
     lengths: Vec<usize>,
 }
 
 impl<'a> SpanSource<'a> {
-    pub fn new(source: &'a [u8]) -> Self {
+    pub fn new(source: &'a str) -> Self {
         let lines = source
-            .split(|c| *c == b'\n')
+            .split(|c| c == '\n')
             .map(|line| line.as_ptr())
             .collect();
-        let lengths = source
-            .split(|c| *c == b'\n')
-            .map(|line| line.len())
-            .collect();
+        let lengths = source.split(|c| c == '\n').map(|line| line.len()).collect();
         Self {
             source,
             lines,
@@ -44,11 +40,11 @@ impl<'a> SpanSource<'a> {
         }
     }
 
-    pub fn line(&self, line_num: usize) -> Option<&[u8]> {
+    pub fn line(&self, line_num: usize) -> Option<&str> {
         assert!(line_num > 0);
-        self.lines
-            .get(line_num - 1)
-            .map(|&line| unsafe { slice::from_raw_parts(line, self.lengths[line_num - 1]) })
+        self.lines.get(line_num - 1).map(|&line| unsafe {
+            core::str::from_utf8_unchecked(slice::from_raw_parts(line, self.lengths[line_num - 1]))
+        })
     }
 
     pub fn get_line_number(&self, span: Span<'a>) -> usize {
@@ -127,7 +123,7 @@ impl<'a, T> Spanned<'a, T> {
         Spanned::new(self.span, f(self.data))
     }
 
-    pub const fn fragment(&self) -> &'a [u8] {
+    pub const fn fragment(&self) -> &'a str {
         self.span.source()
     }
 
@@ -159,7 +155,7 @@ impl<'a, T, E> Spanned<'a, Result<T, E>> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Span<'a> {
-    source: &'a [u8],
+    source: &'a str,
     span_source: &'a SpanSource<'a>,
 }
 
@@ -177,7 +173,7 @@ impl<'a> Debug for Span<'a> {
 
 impl ToString for Span<'_> {
     fn to_string(&self) -> String {
-        std::str::from_utf8(self.source()).unwrap().to_string()
+        self.source().to_string()
     }
 }
 
@@ -186,12 +182,24 @@ impl<'a> Span<'a> {
         (self.line(), self.column())
     }
 
-    pub const fn source(&self) -> &'a [u8] {
+    pub fn first(&self) -> Option<char> {
+        self.source.chars().next()
+    }
+
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        self.source().chars()
+    }
+
+    pub fn as_str(&self) -> &'a str {
+        self.source()
+    }
+
+    pub const fn source(&self) -> &'a str {
         self.source
     }
 
-    pub fn bytes(&self) -> Copied<slice::Iter<u8>> {
-        self.source().iter().copied()
+    pub fn bytes(&self) -> impl Iterator<Item = u8> + 'a {
+        self.source().bytes()
     }
 
     pub fn line(&self) -> usize {
@@ -206,10 +214,8 @@ impl<'a> Span<'a> {
         self.source().len()
     }
 
-    /// returns the beginning of the first match to the given pattern
-    /// NOTE: this is painfully slow
-    pub fn find(&self, pat: &[u8]) -> Option<usize> {
-        (0..self.len()).find(|&i| self[i..].starts_with(pat))
+    pub fn find(&self, pat: &str) -> Option<usize> {
+        self.source.find(pat)
     }
 
     /// smilar to Slice::split_at
@@ -230,21 +236,22 @@ impl<'a> Span<'a> {
         )
     }
 
-    pub fn starts_with(&self, pat: &[u8]) -> bool {
+    pub fn starts_with(&self, pat: &str) -> bool {
         self.source().starts_with(pat)
     }
 
-    pub fn ends_with(&self, pat: &[u8]) -> bool {
+    pub fn ends_with(&self, pat: &str) -> bool {
         self.source().ends_with(pat)
     }
 
-    pub fn take_while<P: FnMut(&u8) -> bool>(self, p: P) -> (Span<'a>, Span<'a>) {
-        let len = self.bytes().take_while(p).count();
-        if len == self.len() {
-            self.split_at(self.len())
-        } else {
-            self.split_at(len)
-        }
+    pub fn take_while<P: FnMut(char) -> bool>(self, mut p: P) -> (Span<'a>, Span<'a>) {
+        self.split_once(|c| !p(c)).unwrap_or((
+            self,
+            Span {
+                source: self.source().split_at(0).0,
+                span_source: self.span_source,
+            },
+        ))
     }
 
     pub fn spans<const SPAN_LENGTH: usize>(&self) -> impl Iterator<Item = Span<'a>> {
@@ -269,11 +276,12 @@ impl<'a> Span<'a> {
         self.source().is_empty()
     }
 
-    pub fn split_once(&self, pred: impl FnMut(&u8) -> bool) -> Option<(Self, Self)> {
-        self.source()
-            .iter()
-            .position(pred)
-            .map(|ind| self.split_at(ind))
+    pub fn split_once(&self, pred: impl FnMut(char) -> bool) -> Option<(Self, Self)> {
+        if let Some(offset) = self.source().find(pred) {
+            Some(self.split_at(offset))
+        } else {
+            None
+        }
     }
 
     pub fn offset(&self) -> usize {
@@ -295,43 +303,36 @@ impl<'a> Span<'a> {
     }
 }
 
-impl Index<usize> for Span<'_> {
-    type Output = u8;
-    fn index(&self, index: usize) -> &u8 {
-        &self.source()[index]
-    }
-}
-
 impl Index<Range<usize>> for Span<'_> {
-    type Output = [u8];
-    fn index(&self, index: Range<usize>) -> &[u8] {
+    type Output = str;
+    fn index(&self, index: Range<usize>) -> &str {
         &self.source()[index]
     }
 }
 
 impl Index<RangeFrom<usize>> for Span<'_> {
-    type Output = [u8];
-    fn index(&self, index: RangeFrom<usize>) -> &[u8] {
+    type Output = str;
+    fn index(&self, index: RangeFrom<usize>) -> &str {
         &self.source()[index]
     }
 }
 
 impl Index<RangeFull> for Span<'_> {
-    type Output = [u8];
+    type Output = str;
     fn index(&self, _index: RangeFull) -> &Self::Output {
         self.source()
     }
 }
 
 impl Index<RangeTo<usize>> for Span<'_> {
-    type Output = [u8];
-    fn index(&self, index: RangeTo<usize>) -> &[u8] {
+    type Output = str;
+    fn index(&self, index: RangeTo<usize>) -> &str {
         &self.source()[index]
     }
 }
 
-impl<'a> AsRef<[u8]> for Span<'a> {
-    fn as_ref(&self) -> &[u8] {
+impl<'a> AsRef<str> for Span<'a> {
+    fn as_ref(&self) -> &str {
         self.source()
     }
 }
@@ -342,7 +343,7 @@ mod test {
 
     #[test]
     fn split_at_same_line() {
-        let str = br#"this is a test"#;
+        let str = r#"this is a test"#;
         let span_source = SpanSource::new(str);
         let s = span_source.source();
         assert_eq!(s.source(), str);
@@ -350,24 +351,24 @@ mod test {
         assert_eq!(s.column(), 1);
 
         let (s1, s2) = s.split_at(4);
-        assert_eq!(s1.source(), b"this");
+        assert_eq!(s1.source(), "this");
         assert_eq!(s1.line(), 1);
         assert_eq!(s1.column(), 1);
-        assert_eq!(s2.source(), b" is a test");
+        assert_eq!(s2.source(), " is a test");
         assert_eq!(s2.line(), 1);
         assert_eq!(s2.column(), 5);
     }
 
     #[test]
     fn split_at_c1_l2() {
-        let str = b"this\nis\na\ntest";
+        let str = "this\nis\na\ntest";
         let span_source = SpanSource::new(str);
         let s = span_source.source();
         let (s1, s2) = s.split_at(5);
-        assert_eq!(s1.source(), b"this\n");
+        assert_eq!(s1.source(), "this\n");
         assert_eq!(s1.line(), 1);
         assert_eq!(s1.column(), 1);
-        assert_eq!(s2.source(), b"is\na\ntest");
+        assert_eq!(s2.source(), "is\na\ntest");
         assert_eq!(s2.line(), 2);
         assert_eq!(s2.column(), 1);
     }
@@ -376,31 +377,31 @@ mod test {
     fn find() {
         use super::*;
         let text = "this is some text";
-        let span_source = SpanSource::new(text.as_bytes());
+        let span_source = SpanSource::new(text);
         let s = span_source.source();
-        let (s1, s2) = s.find(b"is so").map(|i| (&s[..i], &s[i..])).unwrap();
-        assert_eq!(s1, b"this ");
-        assert_eq!(s2, b"is some text");
+        let (s1, s2) = s.find("is so").map(|i| (&s[..i], &s[i..])).unwrap();
+        assert_eq!(s1, "this ");
+        assert_eq!(s2, "is some text");
     }
 
     #[test]
     #[should_panic]
     fn split_at_out_of_bound() {
-        let str = b"this is a test";
+        let str = "this is a test";
         let span_source = SpanSource::new(str);
         span_source.source().split_at(100);
     }
 
     #[test]
     fn split_once() {
-        let text = b"abcdef ghijk";
+        let text = "abcdef ghijk";
         let span_source = SpanSource::new(text);
         let span = span_source.source();
-        let (s1, s2) = span.split_once(|&c| c == b' ').unwrap();
-        assert_eq!(s1.source(), b"abcdef");
+        let (s1, s2) = span.split_once(|c| c == ' ').unwrap();
+        assert_eq!(s1.source(), "abcdef");
         assert_eq!(s1.line(), 1);
         assert_eq!(s1.column(), 1);
-        assert_eq!(s2.source(), b" ghijk");
+        assert_eq!(s2.source(), " ghijk");
         assert_eq!(s2.line(), 1);
         assert_eq!(s2.column(), 7);
     }
@@ -409,7 +410,7 @@ mod test {
     fn merge() {
         // consecutive slices
         {
-            let text = b"abcdefghijklmnopqrstuvwxyz";
+            let text = "abcdefghijklmnopqrstuvwxyz";
             let span_source = SpanSource::new(text);
             let span = span_source.source();
             let (s1, s2) = span.split_at(10);
@@ -419,11 +420,11 @@ mod test {
 
         // empty slice
         {
-            let text = b"abcdefghijklmnopqrstuvwxyz";
+            let text = "abcdefghijklmnopqrstuvwxyz";
             let span_source = SpanSource::new(text);
             let span = span_source.source();
             let (s1, s2) = span.split_at(0);
-            assert_eq!(s1.source(), b"");
+            assert_eq!(s1.source(), "");
             {
                 let s3 = s1.merge(s2);
                 assert_eq!(s3.source(), text);
@@ -432,7 +433,7 @@ mod test {
                 let (s3, s4) = s2.split_at(10);
                 {
                     let s5 = s1.merge(s3);
-                    assert_eq!(s5.source(), text[..10].as_ref());
+                    assert_eq!(s5.source(), &text[..10]);
                 }
                 {
                     let s6 = s1.merge(s4);
@@ -441,11 +442,11 @@ mod test {
             }
         }
         {
-            let text = b"abcdefghijklmnopqrstuvwxyz";
+            let text = "abcdefghijklmnopqrstuvwxyz";
             let span_source = SpanSource::new(text);
             let span = span_source.source();
             let (s1, s2) = span.split_at(span.len());
-            assert_eq!(s2.source(), b"");
+            assert_eq!(s2.source(), "");
             assert_eq!(s1.source(), text);
             {
                 let s3 = s1.merge(s2);
@@ -459,7 +460,7 @@ mod test {
                 }
                 {
                     let s6 = s4.merge(s2);
-                    assert_eq!(s6.source(), text[10..].as_ref());
+                    assert_eq!(s6.source(), &text[10..]);
                 }
             }
         }

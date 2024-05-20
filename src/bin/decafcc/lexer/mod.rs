@@ -18,17 +18,15 @@ impl App for Lexer {
             });
         }
 
-        let mut buf = vec![];
+        let mut buf = String::new();
         fs::File::open(&input_file)
             .unwrap()
-            .read_to_end(&mut buf)
+            .read_to_string(&mut buf)
             .unwrap();
         let code = SpanSource::new(&buf);
         let err_count = tokens(code.source())
             .filter_map(|tok| {
                 use dcfrs::lexer::Token::*;
-                use std::string::String as StdString;
-                let string = |slice: &[u8]| StdString::from_utf8(slice.to_vec()).unwrap();
                 match tok.get() {
                     Ok(Eof) => None,
                     Ok(
@@ -39,31 +37,31 @@ impl App for Lexer {
                         | RightParen | CurlyLeft | CurlyRight | SquareLeft | SquareRight
                         | Increment | Decrement | Import,
                     ) => {
-                        println!("{} {}", tok.line(), string(tok.fragment()));
+                        println!("{} {}", tok.line(), tok.fragment());
                         None
                     }
                     Ok(Identifier) => {
                         println!(
                             "{} IDENTIFIER {}",
                             tok.line(),
-                            StdString::from_utf8(tok.fragment().to_vec()).unwrap()
+                            tok.fragment()
                         );
                         None
                     }
                     Ok(DecimalLiteral | HexLiteral) => {
-                        println!("{} INTLITERAL {}", tok.line(), string(tok.fragment()));
+                        println!("{} INTLITERAL {}", tok.line(), tok.fragment());
                         None
                     }
                     Ok(StringLiteral) => {
-                        println!("{} STRINGLITERAL {}", tok.line(), string(tok.fragment()));
+                        println!("{} STRINGLITERAL {}", tok.line(), tok.fragment());
                         None
                     }
                     Ok(CharLiteral(_)) => {
-                        println!("{} CHARLITERAL {}", tok.line(), string(tok.fragment()));
+                        println!("{} CHARLITERAL {}", tok.line(), tok.fragment());
                         None
                     }
                     Ok(True | False) => {
-                        println!("{} BOOLEANLITERAL {}", tok.line(), string(tok.fragment()));
+                        println!("{} BOOLEANLITERAL {}", tok.line(), tok.fragment());
                         None
                     }
                     // errors are logged in the lexer module anyways

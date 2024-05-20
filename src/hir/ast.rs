@@ -1,8 +1,9 @@
 use crate::{
     hir::sym_map::{FuncSymMap, ImportSymMap, VarSymMap},
-    parser::ast::*,
-    span::*,
+    parser::ast::*, span::Span,
 };
+
+pub type Identifier = String;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HIRLiteral {
@@ -37,17 +38,17 @@ impl<T> Typed<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum HIRVar<'a> {
-    Scalar(Typed<Span<'a>>),
-    Array { arr: Typed<Span<'a>>, size: u64 },
+#[derive(Debug, Clone)]
+pub enum HIRVar {
+    Scalar(Typed<Identifier>),
+    Array { arr: Typed<Identifier>, size: u64 },
 }
 
-impl<'a> HIRVar<'a> {
-    pub fn name(&self) -> Span<'a> {
+impl HIRVar {
+    pub fn name(&self) -> &str {
         match self {
-            Self::Scalar(ty) => ty.val,
-            Self::Array { arr, .. } => arr.val,
+            Self::Scalar(ty) => &ty.val,
+            Self::Array { arr, .. } => &arr.val,
         }
     }
     pub fn is_array(&self) -> bool {
@@ -59,20 +60,20 @@ impl<'a> HIRVar<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRLoc<'a> {
-    Scalar(Typed<Span<'a>>),
+pub enum HIRLoc {
+    Scalar(Typed<Identifier>),
     Index {
-        arr: Typed<Span<'a>>,
+        arr: Typed<Identifier>,
         size: u64,
-        index: HIRExpr<'a>,
+        index: HIRExpr,
     },
 }
 
-impl<'a> HIRLoc<'a> {
-    pub fn name(&self) -> Span<'a> {
+impl HIRLoc {
+    pub fn name(&self) -> &str {
         match self {
-            Self::Scalar(var) => var.val,
-            Self::Index { arr, .. } => arr.val,
+            Self::Scalar(var) => &var.val,
+            Self::Index { arr, .. } => &arr.val,
         }
     }
     pub fn r#type(&self) -> Type {
@@ -81,7 +82,7 @@ impl<'a> HIRLoc<'a> {
             Self::Index { arr, .. } => arr.r#type,
         }
     }
-    pub fn index(var: HIRVar<'a>, index: HIRExpr<'a>) -> Self {
+    pub fn index(var: HIRVar, index: HIRExpr) -> Self {
         assert!(var.is_array());
         match var {
             HIRVar::Scalar(_) => unreachable!(),
@@ -185,60 +186,60 @@ impl TryFrom<Op> for CondOp {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRExpr<'a> {
+pub enum HIRExpr {
     Len(u64),
-    Not(Box<HIRExpr<'a>>),
-    Neg(Box<HIRExpr<'a>>),
+    Not(Box<HIRExpr>),
+    Neg(Box<HIRExpr>),
     Ter {
-        cond: Box<HIRExpr<'a>>,
-        yes: Box<HIRExpr<'a>>,
-        no: Box<HIRExpr<'a>>,
+        cond: Box<HIRExpr>,
+        yes: Box<HIRExpr>,
+        no: Box<HIRExpr>,
     },
-    Call(HIRCall<'a>),
-    Loc(Box<HIRLoc<'a>>),
+    Call(HIRCall),
+    Loc(Box<HIRLoc>),
     Literal(HIRLiteral),
     Arith {
         op: ArithOp,
-        lhs: Box<HIRExpr<'a>>,
-        rhs: Box<HIRExpr<'a>>,
+        lhs: Box<HIRExpr>,
+        rhs: Box<HIRExpr>,
     },
     Rel {
         op: RelOp,
-        lhs: Box<HIRExpr<'a>>,
-        rhs: Box<HIRExpr<'a>>,
+        lhs: Box<HIRExpr>,
+        rhs: Box<HIRExpr>,
     },
     Eq {
         op: EqOp,
-        lhs: Box<HIRExpr<'a>>,
-        rhs: Box<HIRExpr<'a>>,
+        lhs: Box<HIRExpr>,
+        rhs: Box<HIRExpr>,
     },
 
     Cond {
         op: CondOp,
-        lhs: Box<HIRExpr<'a>>,
-        rhs: Box<HIRExpr<'a>>,
+        lhs: Box<HIRExpr>,
+        rhs: Box<HIRExpr>,
     },
 }
 
-impl<'a> From<HIRLoc<'a>> for HIRExpr<'a> {
-    fn from(value: HIRLoc<'a>) -> Self {
+impl From<HIRLoc> for HIRExpr {
+    fn from(value: HIRLoc) -> Self {
         Self::Loc(Box::new(value))
     }
 }
 
-impl<'a> From<HIRLiteral> for HIRExpr<'a> {
+impl From<HIRLiteral> for HIRExpr {
     fn from(value: HIRLiteral) -> Self {
         Self::Literal(value)
     }
 }
 
-impl<'a> From<HIRCall<'a>> for HIRExpr<'a> {
-    fn from(value: HIRCall<'a>) -> Self {
+impl From<HIRCall> for HIRExpr {
+    fn from(value: HIRCall) -> Self {
         Self::Call(value)
     }
 }
 
-impl<'a> HIRExpr<'a> {
+impl HIRExpr {
     pub fn new_not(self) -> Self {
         assert!(self.r#type() == Type::Bool);
         Self::Not(Box::new(self))
@@ -275,74 +276,74 @@ impl<'a> HIRExpr<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRCall<'a> {
+pub enum HIRCall {
     Extern {
-        name: Span<'a>,
-        args: Vec<ExternArg<'a>>,
+        name: String,
+        args: Vec<ExternArg>,
     },
     Decaf {
-        name: Span<'a>,
+        name: String,
         ret: Option<Type>,
-        args: Vec<HIRExpr<'a>>,
+        args: Vec<HIRExpr>,
     },
 }
 
-impl<'a> HIRCall<'a> {
+impl HIRCall {
     fn return_type(&self) -> Option<Type> {
         match self {
             Self::Extern { .. } => Some(Type::Int),
             Self::Decaf { ret, .. } => *ret,
         }
     }
-    pub fn new_extern(name: Span<'a>, args: Vec<ExternArg<'a>>) -> Self {
+    pub fn new_extern(name: String, args: Vec<ExternArg>) -> Self {
         Self::Extern { name, args }
     }
-    pub fn new_decaf(name: Span<'a>, ret: Option<Type>, args: Vec<HIRExpr<'a>>) -> Self {
+    pub fn new_decaf(name: String, ret: Option<Type>, args: Vec<HIRExpr>) -> Self {
         Self::Decaf { name, ret, args }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRStmt<'a> {
-    Assign(HIRAssign<'a>),
-    Expr(HIRExpr<'a>),
-    Return(Option<HIRExpr<'a>>),
+pub enum HIRStmt {
+    Assign(HIRAssign),
+    Expr(HIRExpr),
+    Return(Option<HIRExpr>),
     Break,
     Continue,
     If {
-        cond: HIRExpr<'a>,
-        yes: Box<HIRBlock<'a>>,
-        no: Box<HIRBlock<'a>>,
+        cond: HIRExpr,
+        yes: Box<HIRBlock>,
+        no: Box<HIRBlock>,
     },
     While {
-        cond: HIRExpr<'a>,
-        body: Box<HIRBlock<'a>>,
+        cond: HIRExpr,
+        body: Box<HIRBlock>,
     },
     For {
-        init: HIRAssign<'a>,
-        cond: HIRExpr<'a>,
-        update: HIRAssign<'a>,
-        body: Box<HIRBlock<'a>>,
+        init: HIRAssign,
+        cond: HIRExpr,
+        update: HIRAssign,
+        body: Box<HIRBlock>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRFunction<'a> {
-    pub name: Span<'a>,
-    pub body: HIRBlock<'a>,
-    pub args: VarSymMap<'a>,
+pub struct HIRFunction {
+    pub name: String,
+    pub body: HIRBlock,
+    pub args: VarSymMap,
     pub ret: Option<Type>,
 }
 
-impl<'a> HIRFunction<'a> {
+impl HIRFunction {
     pub fn new(
-        name: PIdentifier<'a>,
-        body: HIRBlock<'a>,
-        args: VarSymMap<'a>,
+        name: Span,
+        body: HIRBlock,
+        args: VarSymMap,
         ret: Option<Type>,
     ) -> Self {
         Self {
-            name: name.span(),
+            name: name.to_string(),
             body,
             args,
             ret,
@@ -351,68 +352,68 @@ impl<'a> HIRFunction<'a> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct HIRBlock<'a> {
-    pub decls: VarSymMap<'a>,
-    pub stmts: Vec<HIRStmt<'a>>,
+pub struct HIRBlock {
+    pub decls: VarSymMap,
+    pub stmts: Vec<HIRStmt>,
 }
 
-impl<'a> HIRBlock<'a> {
-    pub fn decls(&self) -> &VarSymMap<'a> {
+impl HIRBlock {
+    pub fn decls(&self) -> &VarSymMap {
         &self.decls
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum FunctionSig<'a> {
-    Extern(Span<'a>),
+pub enum FunctionSig {
+    Extern(String),
     Decl {
-        name: Span<'a>,
+        name: String,
         arg_types: Vec<Type>,
         ty: Option<Type>,
     },
 }
 
-impl<'a> FunctionSig<'a> {
-    pub fn name(&self) -> Span<'a> {
+impl FunctionSig {
+    pub fn name(&self) -> &str {
         match self {
-            Self::Extern(name) => *name,
-            Self::Decl { name, .. } => *name,
+            Self::Extern(name) => name,
+            Self::Decl { name, .. } => name,
         }
     }
-    pub fn get(func: &PFunction<'a>) -> Self {
+    pub fn get(func: &PFunction) -> Self {
         Self::Decl {
-            name: func.name.span(),
+            name: func.name.to_string(),
             arg_types: func.args.iter().map(|arg| arg.r#type()).collect(),
             ty: func.ret,
         }
     }
-    pub(super) fn from_pimport(import: &PImport<'a>) -> Self {
-        Self::Extern(import.name().span())
+    pub(super) fn from_pimport(import: &PImport) -> Self {
+        Self::Extern(import.name().to_string())
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ExternArg<'a> {
-    String(Span<'a>),
-    Array(Span<'a>),
-    Expr(HIRExpr<'a>),
+pub enum ExternArg {
+    String(String),
+    Array(String),
+    Expr(HIRExpr),
 }
 
-impl<'a> From<PString<'a>> for ExternArg<'a> {
-    fn from(value: PString<'a>) -> Self {
-        Self::String(value.span())
+impl From<PString<'_>> for ExternArg {
+    fn from(value: PString) -> Self {
+        Self::String(value.span().to_string())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRRoot<'a> {
-    pub globals: VarSymMap<'a>,
-    pub functions: FuncSymMap<'a>,
-    pub imports: ImportSymMap<'a>,
+pub struct HIRRoot {
+    pub globals: VarSymMap,
+    pub functions: FuncSymMap,
+    pub imports: ImportSymMap,
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRAssign<'a> {
-    pub lhs: HIRLoc<'a>,
-    pub rhs: HIRExpr<'a>,
+pub struct HIRAssign {
+    pub lhs: HIRLoc,
+    pub rhs: HIRExpr,
 }

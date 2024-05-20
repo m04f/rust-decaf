@@ -1,7 +1,4 @@
-use crate::{
-    parser::{self, ast::*},
-    span::Span,
-};
+use crate::parser::{self, ast::*};
 
 use std::collections::{HashMap, HashSet};
 
@@ -15,18 +12,18 @@ use sym_map::*;
 pub use ast::*;
 pub use sym_map::{FSymMap, VSymMap};
 
-impl<'a> HIRExpr<'a> {
-    fn from_pexpr(
+impl HIRExpr {
+    fn from_pexpr<'a>(
         expr: PExpr<'a>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         use PExpr::*;
         match expr {
-            Len(_, ident) => match vst.get_sym(ident.span()) {
-                None => Err(vec![UndeclaredIdentifier(ident.span())]),
+            Len { id, .. } => match vst.get_sym(id) {
+                None => Err(vec![UndeclaredIdentifier(id)]),
                 Some(var) => match var {
-                    HIRVar::Scalar { .. } => Err(vec![ExpectedArrayVariable(ident.span())]),
+                    HIRVar::Scalar { .. } => Err(vec![ExpectedArrayVariable(id)]),
                     HIRVar::Array { size, .. } => Ok(Self::Len(*size)),
                 },
             },
@@ -56,22 +53,22 @@ impl<'a> HIRExpr<'a> {
                 let e = Self::from_pexpr(*e, vst, fst)?;
                 Ok(e.nested())
             }
-            Index { name, offset, span } => match vst.get_sym(name.span()) {
-                None => Err(vec![UndeclaredIdentifier(name.span())]),
-                Some(HIRVar::Scalar { .. }) => Err(vec![ExpectedArrayVariable(name.span())]),
+            Index { name, offset, span } => match vst.get_sym(name) {
+                None => Err(vec![UndeclaredIdentifier(name)]),
+                Some(HIRVar::Scalar { .. }) => Err(vec![ExpectedArrayVariable(name)]),
                 Some(var) => {
                     let offset = Self::from_pexpr(*offset, vst, fst)?;
                     if !offset.is_int() {
                         Err(vec![ExpectedIntExpr(span)])
                     } else {
-                        Ok(HIRLoc::index(*var, offset).into())
+                        Ok(HIRLoc::index(var.clone(), offset).into())
                     }
                 }
             },
-            Scalar(ident) => match vst.get_sym(ident.span()) {
-                None => Err(vec![UndeclaredIdentifier(ident.span())]),
-                Some(HIRVar::Scalar(var)) => Ok(HIRLoc::Scalar(*var).into()),
-                _ => Err(vec![ExpectedScalarVariable(ident.span())]),
+            Scalar(ident) => match vst.get_sym(ident) {
+                None => Err(vec![UndeclaredIdentifier(ident)]),
+                Some(HIRVar::Scalar(var)) => Ok(HIRLoc::Scalar(var.clone()).into()),
+                _ => Err(vec![ExpectedScalarVariable(ident)]),
             },
             Ter { cond, yes, no, .. } => {
                 let cond_span = cond.span();
@@ -244,25 +241,25 @@ impl<'a> HIRLiteral {
                 .ok_or(vec![TooLargeInt(num)])
                 .map(HIRLiteral::Int),
             PLiteral::Bool(val) => Ok(HIRLiteral::Bool(val)),
-            PLiteral::Char(c) => Ok(HIRLiteral::Int(c.into())),
+            PLiteral::Char(c) => Ok(HIRLiteral::Int(c as i64)),
         }
     }
 }
 
-impl<'a> ExternArg<'a> {
-    fn extern_from_pcall(
+impl ExternArg {
+    fn extern_from_pcall<'a>(
         arg: PArg<'a>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         match arg {
             PArg::Expr(PExpr::Scalar(ident)) => {
                 if let Some(ident) = vst
-                    .get_sym(ident.span())
+                    .get_sym(ident)
                     .and_then(|var| var.is_array().then_some(var.name()))
                 {
                     {
-                        Ok(Self::Array(ident))
+                        Ok(Self::Array(ident.to_string()))
                     }
                 } else {
                     HIRExpr::from_pexpr(PExpr::Scalar(ident), vst, fst).map(Self::Expr)
@@ -294,23 +291,23 @@ impl<'a, T: Iterator<Item = Result<R, Vec<Error<'a>>>>, R> FoldResult<'a, R> for
     }
 }
 
-impl<'a> HIRCall<'a> {
-    fn from_pcall(
+impl HIRCall {
+    fn from_pcall<'a>(
         call: PCall<'a>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        if vst.get_sym(call.name.span()).is_some() {
-            Err(vec![VariableNotAMethod(call.name.span())])
+        if vst.get_sym(call.name).is_some() {
+            Err(vec![VariableNotAMethod(call.name)])
         } else {
-            match fst.get_sym(call.name.span()) {
-                None => Err(vec![UndeclaredIdentifier(call.name.span())]),
+            match fst.get_sym(call.name) {
+                None => Err(vec![UndeclaredIdentifier(call.name)]),
                 Some(FunctionSig::Extern(name)) => call
                     .args
                     .into_iter()
                     .map(|arg| ExternArg::extern_from_pcall(arg, vst, fst))
                     .fold_result()
-                    .map(|args| HIRCall::new_extern(*name, args)),
+                    .map(|args| HIRCall::new_extern(name.clone(), args)),
                 Some(FunctionSig::Decl {
                     name,
                     arg_types,
@@ -338,12 +335,12 @@ impl<'a> HIRCall<'a> {
                                 }
                             })
                             .fold_result()
-                            .map(|args| HIRCall::new_decaf(*name, *ty, args))
+                            .map(|args| HIRCall::new_decaf(name.clone(), *ty, args))
                     } else {
                         Err(vec![WrongNumberOfArgs {
                             expected: arg_types.len(),
                             found: call.args.len(),
-                            span: call.name.span(),
+                            span: call.name,
                         }])
                     }
                 }
@@ -352,37 +349,38 @@ impl<'a> HIRCall<'a> {
     }
 }
 
-impl<'a> HIRLoc<'a> {
-    fn from_ploc(
-        loc: PLoc<'a>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+impl HIRLoc {
+    fn from_ploc<'a>(
+        mut loc: PLoc<'a>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        match (vst.get_sym(loc.ident()), loc.offset) {
-            (Some(HIRVar::Scalar(var)), None) => Ok(HIRLoc::Scalar(*var)),
-            (Some(HIRVar::Scalar(var)), Some(_)) => Err(vec![CannotIndexScalar(var.into_val())]),
-            (Some(HIRVar::Array { arr, .. }), None) => {
-                Err(vec![CannotAssignToArray(arr.into_val())])
+        match (vst.get_sym(loc.ident()), loc.offset.take()) {
+            (Some(HIRVar::Scalar(var)), None) => Ok(HIRLoc::Scalar(var.clone())),
+            (Some(HIRVar::Scalar(_)), Some(_)) => Err(vec![CannotIndexScalar(loc.span())]),
+            (Some(HIRVar::Array { .. }), None) => {
+                // TODO: rename this error enum variant
+                Err(vec![CannotAssignToArray(loc.span())])
             }
             (Some(arr), Some(offset)) => {
                 let offset_span = offset.span();
                 let offset = HIRExpr::from_pexpr(offset, vst, fst)?;
                 if offset.r#type() == Type::Int {
-                    Ok(HIRLoc::index(*arr, offset))
+                    Ok(HIRLoc::index(arr.clone(), offset))
                 } else {
                     Err(vec![ExpectedIntExpr(offset_span)])
                 }
             }
-            (None, _) => Err(vec![UndeclaredIdentifier(loc.ident.span())]),
+            (None, _) => Err(vec![UndeclaredIdentifier(loc.ident)]),
         }
     }
 }
 
-impl<'a> HIRAssign<'a> {
-    fn from_passign(
+impl HIRAssign {
+    fn from_passign<'a>(
         assign: PAssign<'a>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         use parser::ast::PAssignExpr::*;
         use ArithOp::*;
@@ -469,10 +467,10 @@ impl<'a> HIRAssign<'a> {
     }
 }
 
-impl<'a> HIRVar<'a> {
-    fn from_pvar(var: PVar<'a>) -> Result<Self, Error<'a>> {
+impl HIRVar {
+    fn from_pvar<'a>(var: PVar<'a>) -> Result<Self, Error<'a>> {
         match var {
-            PVar::Scalar { ident, ty } => Ok(HIRVar::Scalar(Typed::new(ty, ident.span()))),
+            PVar::Scalar { ident, ty } => Ok(HIRVar::Scalar(Typed::new(ty, ident.to_string()))),
             PVar::Array {
                 ident, size, ty, ..
             } => {
@@ -484,7 +482,7 @@ impl<'a> HIRVar<'a> {
                         Err(ZeroArraySize(size_span))
                     } else {
                         Ok(Self::Array {
-                            arr: Typed::new(ty, ident.span()),
+                            arr: Typed::new(ty, ident.to_string()),
                             size: size as u64,
                         })
                     }
@@ -496,13 +494,13 @@ impl<'a> HIRVar<'a> {
     }
 }
 
-impl<'a> HIRBlock<'a> {
-    fn from_pblock(
+impl HIRBlock {
+    fn from_pblock<'a>(
         block: PBlock<'a>,
         in_loop: bool,
         expected_return: Option<Type>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         let block_vst = construct_var_hashmap(block.decls())?;
         let stmts = block
@@ -513,7 +511,7 @@ impl<'a> HIRBlock<'a> {
                     stmt,
                     in_loop,
                     expected_return,
-                    VSymMap::new(&block_vst).parent(&vst),
+                    &VSymMap::new(&block_vst).parent(&vst),
                     fst,
                 )
             })
@@ -525,13 +523,13 @@ impl<'a> HIRBlock<'a> {
     }
 }
 
-impl<'a> HIRStmt<'a> {
-    fn from_pstmt(
+impl HIRStmt {
+    fn from_pstmt<'a>(
         stmt: PStmt<'a>,
         in_loop: bool,
         expected_return: Option<Type>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         match stmt {
             PStmt::Call(call) => {
@@ -691,22 +689,29 @@ impl<'a> HIRStmt<'a> {
     }
 }
 
-impl<'a> HIRFunction<'a> {
-    fn from_pfunction(
+impl HIRFunction {
+    fn from_pfunction<'a>(
         func: PFunction<'a>,
-        vst: VSymMap<'a, '_>,
-        fst: FSymMap<'a, '_>,
+        vst: &VSymMap<'_>,
+        fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        let args = construct_var_hashmap(func.args)?;
-        let body = HIRBlock::from_pblock(
-            func.body,
-            false,
-            func.ret,
-            VSymMap::new(&args).parent(&vst),
-            fst,
-        )?;
-        let redefs = intersect(body.decls().keys().copied(), &args);
+        let redefs = intersect(
+            &func.body
+                .decls()
+                .iter()
+                .map(|v| v.span())
+                .collect::<HashSet<_>>(),
+            func.args.iter().map(|arg| arg.span()),
+        );
         if redefs.is_empty() {
+            let args = construct_var_hashmap(func.args)?;
+            let body = HIRBlock::from_pblock(
+                func.body,
+                false,
+                func.ret,
+                &VSymMap::new(&args).parent(&vst),
+                fst,
+            )?;
             Ok(Self::new(func.name, body, args, func.ret))
         } else {
             Err(redefs)
@@ -714,53 +719,90 @@ impl<'a> HIRFunction<'a> {
     }
 }
 
-impl<'a> HIRRoot<'a> {
-    pub fn from_proot(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
-        let globals = construct_var_hashmap(root.decls)?;
-        let mut sigs = construct_sig_hashmap(&root.imports)?;
-        let imports = root
-            .imports
-            .into_iter()
-            .map(|imp| imp.name().span())
-            .collect::<HashSet<Span>>();
-        let functions = root
-            .funcs
-            .into_iter()
-            .map(|f| {
-                let func_span = f.name.span();
-                if let Some(func) = sigs.get(&func_span) {
-                    return Err(vec![Redifinition(func_span, func.name())]);
-                }
-                sigs.insert(func_span, FunctionSig::get(&f));
-                let r = HIRFunction::from_pfunction(f, VSymMap::new(&globals), FSymMap::new(&sigs))
-                    .map(|f| (f.name, f));
-                r
-            })
-            .fold_result()?
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-        {
-            let mut redefs = intersect(imports.iter().copied(), &globals);
-            redefs.extend(intersect(imports.iter().copied(), &functions));
-            redefs.extend(intersect(globals.keys().copied(), &functions));
-            if redefs.is_empty() {
-                Ok(())
-            } else {
-                Err(redefs)
-            }
-        }?;
-        if let Some((s, f)) = functions.iter().find(|&(s, _)| s.source() == b"main") {
-            if f.ret.is_some() || !f.args.is_empty() {
-                Err(vec![InvalidMainSig(*s)])
-            } else {
-                Ok(Self {
-                    globals,
-                    functions,
-                    imports,
-                })
+impl HIRRoot {
+    pub fn from_proot<'a>(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
+        let (import_redefs, imports_set) =
+            root.imports
+                .iter()
+                .fold((vec![], HashSet::new()), |(mut redefs, mut fs), f| {
+                    if let Some(old_f) = fs.get(&f.name()) {
+                        redefs.push(Error::Redifinition(*old_f, f.name()));
+                    } else {
+                        fs.insert(f.name());
+                    }
+                    (redefs, fs)
+                });
+        let (decls_redefs, decls_set) =
+            root.decls
+                .iter()
+                .fold((vec![], HashSet::new()), |(mut redefs, mut vs), v| {
+                    if let Some(old_v) = vs.get(&v.name()) {
+                        if !imports_set.contains(old_v) {
+                            redefs.push(Error::Redifinition(*old_v, v.name()));
+                        }
+                    } else {
+                        vs.insert(v.name());
+                    }
+                    (redefs, vs)
+                });
+        let (funcs_redefs, _) =
+            root.funcs
+                .iter()
+                .fold((vec![], HashSet::new()), |(mut redefs, mut fs), f| {
+                    if let Some(old_f) = fs.get(&f.name()) {
+                        if !imports_set.contains(old_f) && !decls_set.contains(old_f) {
+                            redefs.push(Error::Redifinition(*old_f, f.name()));
+                        }
+                    } else {
+                        fs.insert(f.name());
+                    }
+                    (redefs, fs)
+                });
+        let mut redefs = import_redefs;
+        redefs.extend(intersect(&imports_set, root.decls.iter().map(|v| v.name())));
+        redefs.extend(decls_redefs);
+        redefs.extend(intersect(&imports_set, root.funcs.iter().map(|f| f.name)));
+        redefs.extend(funcs_redefs);
+        redefs.extend(intersect(&decls_set, root.funcs.iter().map(|f| f.name)));
+        let mut errors = redefs;
+        if let Some(main) = root.funcs.iter().find(|f| f.name.as_str() == "main") {
+            if !(main.args.is_empty() && main.ret.is_none()) {
+                errors.push(InvalidMainSig(main.span()))
             }
         } else {
-            Err(vec![RootDoesNotContainMain])
+            errors.push(RootDoesNotContainMain)
+        };
+        if errors.is_empty() {
+            let globals = construct_var_hashmap(root.decls)?;
+            let mut sigs = construct_sig_hashmap(&root.imports)?;
+            let imports = root
+                .imports
+                .into_iter()
+                .map(|imp| imp.name().to_string())
+                .collect::<HashSet<_>>();
+            let functions = root
+                .funcs
+                .into_iter()
+                .map(|f| {
+                    sigs.insert(f.name.to_string(), FunctionSig::get(&f));
+                    let r = HIRFunction::from_pfunction(
+                        f,
+                        &VSymMap::new(&globals),
+                        &FSymMap::new(&sigs),
+                    )
+                    .map(|f| (f.name.clone(), f));
+                    r
+                })
+                .fold_result()?
+                .into_iter()
+                .collect::<HashMap<_, _>>();
+            Ok(Self {
+                globals,
+                functions,
+                imports,
+            })
+        } else {
+            Err(errors)
         }
     }
 }

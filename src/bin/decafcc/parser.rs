@@ -15,7 +15,7 @@ impl App for Parser {
         input_file: String,
     ) -> ExitStatus {
         let text = read_to_string(&input_file).unwrap();
-        let code = SpanSource::new(text.as_bytes());
+        let code = SpanSource::new(&text);
         let mut parser =
             dcfrs::parser::Parser::new(tokens(code.source()).map(|s| s.map(|t| t.unwrap())), |e| {
                 ewrite(stderr, &input_file, e).unwrap()
