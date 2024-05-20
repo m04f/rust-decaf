@@ -1,4 +1,4 @@
-use crate::{error::*, parser::ast::Type, span::*};
+use crate::{error::*, ast::Type, span::*};
 
 #[derive(Debug)]
 pub enum Error<'a> {

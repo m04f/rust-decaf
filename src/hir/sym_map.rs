@@ -1,19 +1,11 @@
 use crate::{
-    hir::{
-        ast::{FunctionSig, HIRFunction, HIRVar},
-        error::Error::{self, *},
-    },
-    parser::ast::{PImport, PVar},
+    ast::{FunctionSig, SigSymMap, Var, VarSymMap},
+    cst::{Import, PVar},
+    hir::error::Error::{self, *},
     span::*,
 };
 
 use std::collections::{HashMap, HashSet};
-
-pub type SymMap<T> = HashMap<String, T>;
-pub type VarSymMap = SymMap<HIRVar>;
-pub type FuncSymMap = SymMap<HIRFunction>;
-pub type ImportSymMap = HashSet<String>;
-pub type SigSymMap = SymMap<FunctionSig>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SymTable<'a, O> {
@@ -22,7 +14,7 @@ pub struct SymTable<'a, O> {
 }
 
 pub type FSymMap<'a> = SymTable<'a, FunctionSig>;
-pub type VSymMap<'a> = SymTable<'a, HIRVar>;
+pub type VSymMap<'a> = SymTable<'a, Var>;
 
 impl<'a, O> SymTable<'a, O> {
     pub fn new(map: &'a HashMap<String, O>) -> Self {
@@ -46,7 +38,7 @@ impl<'a, O> SymTable<'a, O> {
 }
 
 pub(super) fn construct_sig_hashmap<'a>(
-    externs: &[PImport<'a>],
+    externs: &[Import<'a>],
 ) -> Result<SigSymMap, Vec<Error<'a>>> {
     let mut errors = vec![];
     for i in 0..externs.len() {
@@ -69,8 +61,9 @@ pub(super) fn construct_sig_hashmap<'a>(
 pub(super) fn construct_var_hashmap<'a, T: AsRef<[PVar<'a>]>>(
     vars: T,
 ) -> Result<VarSymMap, Vec<Error<'a>>> {
-    vars.as_ref().iter().fold(Ok(HashMap::new()), |r, v| {
-        match (r, HIRVar::from_pvar(*v)) {
+    vars.as_ref()
+        .iter()
+        .fold(Ok(HashMap::new()), |r, v| match (r, Var::from_pvar(*v)) {
             (Ok(mut syms), Ok(sym)) => {
                 syms.insert(sym.name().to_string(), sym);
                 Ok(syms)
@@ -81,8 +74,7 @@ pub(super) fn construct_var_hashmap<'a, T: AsRef<[PVar<'a>]>>(
             }
             (Ok(_), Err(e)) => Err(vec![e]),
             (errors @ Err(_), Ok(_)) => errors,
-        }
-    })
+        })
 }
 
 pub(super) fn get_redefs<'a>(syms: impl Iterator<Item = Span<'a>>) -> Option<Vec<Error<'a>>> {

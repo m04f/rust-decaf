@@ -1,17 +1,25 @@
-use crate::{
-    hir::sym_map::{FuncSymMap, ImportSymMap, VarSymMap},
-    parser::ast::*, span::Span,
-};
+use std::collections::{HashMap, HashSet};
+
+use crate::span::Span;
+use crate::cst;
+
+pub type SymMap<T> = HashMap<String, T>;
+pub type VarSymMap = SymMap<Var>;
+pub type FuncSymMap = SymMap<Function>;
+pub type ImportSymMap = HashSet<String>;
+pub type SigSymMap = SymMap<FunctionSig>;
+
+pub use crate::cst::Type;
 
 pub type Identifier = String;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HIRLiteral {
+pub enum Literal {
     Int(i64),
     Bool(bool),
 }
 
-impl From<i64> for HIRLiteral {
+impl From<i64> for Literal {
     fn from(val: i64) -> Self {
         Self::Int(val)
     }
@@ -39,12 +47,12 @@ impl<T> Typed<T> {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRVar {
+pub enum Var {
     Scalar(Typed<Identifier>),
     Array { arr: Typed<Identifier>, size: u64 },
 }
 
-impl HIRVar {
+impl Var {
     pub fn name(&self) -> &str {
         match self {
             Self::Scalar(ty) => &ty.val,
@@ -60,16 +68,16 @@ impl HIRVar {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRLoc {
+pub enum Location {
     Scalar(Typed<Identifier>),
     Index {
         arr: Typed<Identifier>,
         size: u64,
-        index: HIRExpr,
+        index: Expr,
     },
 }
 
-impl HIRLoc {
+impl Location {
     pub fn name(&self) -> &str {
         match self {
             Self::Scalar(var) => &var.val,
@@ -82,11 +90,11 @@ impl HIRLoc {
             Self::Index { arr, .. } => arr.r#type,
         }
     }
-    pub fn index(var: HIRVar, index: HIRExpr) -> Self {
+    pub fn index(var: Var, index: Expr) -> Self {
         assert!(var.is_array());
         match var {
-            HIRVar::Scalar(_) => unreachable!(),
-            HIRVar::Array { arr, size } => Self::Index {
+            Var::Scalar(_) => unreachable!(),
+            Var::Array { arr, size } => Self::Index {
                 arr: Typed {
                     r#type: arr.r#type,
                     val: arr.val,
@@ -98,7 +106,7 @@ impl HIRLoc {
     }
 }
 
-impl HIRLiteral {
+impl Literal {
     pub fn int(self) -> Option<i64> {
         match self {
             Self::Int(val) => Some(val),
@@ -116,15 +124,15 @@ pub enum ArithOp {
     Mod,
 }
 
-impl TryFrom<Op> for ArithOp {
+impl TryFrom<cst::Op> for ArithOp {
     type Error = ();
-    fn try_from(op: Op) -> Result<Self, Self::Error> {
+    fn try_from(op: cst::Op) -> Result<Self, Self::Error> {
         match op {
-            Op::Add => Ok(ArithOp::Add),
-            Op::Sub => Ok(ArithOp::Sub),
-            Op::Mul => Ok(ArithOp::Mul),
-            Op::Div => Ok(ArithOp::Div),
-            Op::Mod => Ok(ArithOp::Mod),
+            cst::Op::Add => Ok(ArithOp::Add),
+            cst::Op::Sub => Ok(ArithOp::Sub),
+            cst::Op::Mul => Ok(ArithOp::Mul),
+            cst::Op::Div => Ok(ArithOp::Div),
+            cst::Op::Mod => Ok(ArithOp::Mod),
             _ => Err(()),
         }
     }
@@ -138,14 +146,14 @@ pub enum RelOp {
     GreaterEqual,
 }
 
-impl TryFrom<Op> for RelOp {
+impl TryFrom<cst::Op> for RelOp {
     type Error = ();
-    fn try_from(op: Op) -> Result<Self, Self::Error> {
+    fn try_from(op: cst::Op) -> Result<Self, Self::Error> {
         match op {
-            Op::Less => Ok(RelOp::Less),
-            Op::LessEqual => Ok(RelOp::LessEqual),
-            Op::Greater => Ok(RelOp::Greater),
-            Op::GreaterEqual => Ok(RelOp::GreaterEqual),
+            cst::Op::Less => Ok(RelOp::Less),
+            cst::Op::LessEqual => Ok(RelOp::LessEqual),
+            cst::Op::Greater => Ok(RelOp::Greater),
+            cst::Op::GreaterEqual => Ok(RelOp::GreaterEqual),
             _ => Err(()),
         }
     }
@@ -157,12 +165,12 @@ pub enum EqOp {
     NotEqual,
 }
 
-impl TryFrom<Op> for EqOp {
+impl TryFrom<cst::Op> for EqOp {
     type Error = ();
-    fn try_from(op: Op) -> Result<Self, Self::Error> {
+    fn try_from(op: cst::Op) -> Result<Self, Self::Error> {
         match op {
-            Op::Equal => Ok(EqOp::Equal),
-            Op::NotEqual => Ok(EqOp::NotEqual),
+            cst::Op::Equal => Ok(EqOp::Equal),
+            cst::Op::NotEqual => Ok(EqOp::NotEqual),
             _ => Err(()),
         }
     }
@@ -174,72 +182,70 @@ pub enum CondOp {
     Or,
 }
 
-impl TryFrom<Op> for CondOp {
+impl TryFrom<cst::Op> for CondOp {
     type Error = ();
-    fn try_from(op: Op) -> Result<Self, Self::Error> {
+    fn try_from(op: cst::Op) -> Result<Self, Self::Error> {
         match op {
-            Op::And => Ok(CondOp::And),
-            Op::Or => Ok(CondOp::Or),
+            cst::Op::And => Ok(CondOp::And),
+            cst::Op::Or => Ok(CondOp::Or),
             _ => Err(()),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRExpr {
+pub enum Expr {
     Len(u64),
-    Not(Box<HIRExpr>),
-    Neg(Box<HIRExpr>),
+    Not(Box<Expr>),
+    Neg(Box<Expr>),
     Ter {
-        cond: Box<HIRExpr>,
-        yes: Box<HIRExpr>,
-        no: Box<HIRExpr>,
+        cond: Box<Expr>,
+        yes: Box<Expr>,
+        no: Box<Expr>,
     },
-    Call(HIRCall),
-    Loc(Box<HIRLoc>),
-    Literal(HIRLiteral),
+    Call(Call),
+    Loc(Box<Location>),
+    IntLiteral(i64),
+    BoolLiteral(bool),
     Arith {
         op: ArithOp,
-        lhs: Box<HIRExpr>,
-        rhs: Box<HIRExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     Rel {
         op: RelOp,
-        lhs: Box<HIRExpr>,
-        rhs: Box<HIRExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     Eq {
         op: EqOp,
-        lhs: Box<HIRExpr>,
-        rhs: Box<HIRExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
 
     Cond {
         op: CondOp,
-        lhs: Box<HIRExpr>,
-        rhs: Box<HIRExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
 }
 
-impl From<HIRLoc> for HIRExpr {
-    fn from(value: HIRLoc) -> Self {
+impl From<Location> for Expr {
+    fn from(value: Location) -> Self {
         Self::Loc(Box::new(value))
     }
 }
 
-impl From<HIRLiteral> for HIRExpr {
-    fn from(value: HIRLiteral) -> Self {
-        Self::Literal(value)
+impl From<Literal> for Expr {
+    fn from(value: Literal) -> Self {
+        match value {
+            Literal::Int(n) => Expr::IntLiteral(n),
+            Literal::Bool(b) => Expr::BoolLiteral(b),
+        }
     }
 }
 
-impl From<HIRCall> for HIRExpr {
-    fn from(value: HIRCall) -> Self {
-        Self::Call(value)
-    }
-}
-
-impl HIRExpr {
+impl Expr {
     pub fn new_not(self) -> Self {
         assert!(self.r#type() == Type::Bool);
         Self::Not(Box::new(self))
@@ -259,11 +265,10 @@ impl HIRExpr {
     }
 
     pub fn r#type(&self) -> Type {
-        use HIRExpr::*;
-        use HIRLiteral::*;
+        use Expr::*;
         match self {
-            Len(_) | Neg(_) | Arith { .. } | Literal(Int(_)) => Type::Int,
-            Cond { .. } | Eq { .. } | Rel { .. } | Not(..) | Literal(Bool(_)) => Type::Bool,
+            Len(_) | Neg(_) | Arith { .. } | IntLiteral(_) => Type::Int,
+            Cond { .. } | Eq { .. } | Rel { .. } | Not(..) | BoolLiteral(_) => Type::Bool,
             Ter { yes, .. } => yes.r#type(),
             Loc(loc) => loc.r#type(),
             Call(call) => call.return_type().unwrap(),
@@ -272,7 +277,7 @@ impl HIRExpr {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRCall {
+pub enum Call {
     Extern {
         name: String,
         args: Vec<ExternArg>,
@@ -280,11 +285,11 @@ pub enum HIRCall {
     Decaf {
         name: String,
         ret: Option<Type>,
-        args: Vec<HIRExpr>,
+        args: Vec<Expr>,
     },
 }
 
-impl HIRCall {
+impl Call {
     fn return_type(&self) -> Option<Type> {
         match self {
             Self::Extern { .. } => Some(Type::Int),
@@ -294,50 +299,45 @@ impl HIRCall {
     pub fn new_extern(name: String, args: Vec<ExternArg>) -> Self {
         Self::Extern { name, args }
     }
-    pub fn new_decaf(name: String, ret: Option<Type>, args: Vec<HIRExpr>) -> Self {
+    pub fn new_decaf(name: String, ret: Option<Type>, args: Vec<Expr>) -> Self {
         Self::Decaf { name, ret, args }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRStmt {
-    Assign(HIRAssign),
-    Expr(HIRExpr),
-    Return(Option<HIRExpr>),
+pub enum Stmt {
+    Assign(Assign),
+    Expr(Expr),
+    Return(Option<Expr>),
     Break,
     Continue,
     If {
-        cond: HIRExpr,
-        yes: Box<HIRBlock>,
-        no: Box<HIRBlock>,
+        cond: Expr,
+        yes: Box<Block>,
+        no: Box<Block>,
     },
     While {
-        cond: HIRExpr,
-        body: Box<HIRBlock>,
+        cond: Expr,
+        body: Box<Block>,
     },
     For {
-        init: HIRAssign,
-        cond: HIRExpr,
-        update: HIRAssign,
-        body: Box<HIRBlock>,
+        init: Assign,
+        cond: Expr,
+        update: Assign,
+        body: Box<Block>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRFunction {
+pub struct Function {
     pub name: String,
-    pub body: HIRBlock,
+    pub body: Block,
     pub args: VarSymMap,
     pub ret: Option<Type>,
 }
 
-impl HIRFunction {
-    pub fn new(
-        name: Span,
-        body: HIRBlock,
-        args: VarSymMap,
-        ret: Option<Type>,
-    ) -> Self {
+impl Function {
+    pub fn new(name: Span, body: Block, args: VarSymMap, ret: Option<Type>) -> Self {
         Self {
             name: name.to_string(),
             body,
@@ -348,12 +348,12 @@ impl HIRFunction {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct HIRBlock {
+pub struct Block {
     pub decls: VarSymMap,
-    pub stmts: Vec<HIRStmt>,
+    pub stmts: Vec<Stmt>,
 }
 
-impl HIRBlock {
+impl Block {
     pub fn decls(&self) -> &VarSymMap {
         &self.decls
     }
@@ -376,14 +376,14 @@ impl FunctionSig {
             Self::Decl { name, .. } => name,
         }
     }
-    pub fn get(func: &PFunction) -> Self {
+    pub fn get(func: &cst::PFunction) -> Self {
         Self::Decl {
             name: func.name.to_string(),
             arg_types: func.args.iter().map(|arg| arg.r#type()).collect(),
             ty: func.ret,
         }
     }
-    pub(super) fn from_pimport(import: &PImport) -> Self {
+    pub(super) fn from_pimport(import: &cst::Import) -> Self {
         Self::Extern(import.name().to_string())
     }
 }
@@ -392,24 +392,18 @@ impl FunctionSig {
 pub enum ExternArg {
     String(String),
     Array(String),
-    Expr(HIRExpr),
-}
-
-impl From<PString<'_>> for ExternArg {
-    fn from(value: PString) -> Self {
-        Self::String(value.span().to_string())
-    }
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRRoot {
+pub struct Root {
     pub globals: VarSymMap,
     pub functions: FuncSymMap,
     pub imports: ImportSymMap,
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRAssign {
-    pub lhs: HIRLoc,
-    pub rhs: HIRExpr,
+pub struct Assign {
+    pub lhs: Location,
+    pub rhs: Expr,
 }

@@ -1,67 +1,69 @@
-use crate::parser::{self, ast::*};
+use crate::ast::*;
+use crate::cst::{self, Arg as CArg, Expr as CExpr, Location as CLocation};
 
 use std::collections::{HashMap, HashSet};
 
-mod ast;
 mod error;
 use error::*;
 use Error::*;
 mod sym_map;
 use sym_map::*;
 
-pub use ast::*;
 pub use sym_map::{FSymMap, VSymMap};
 
-impl HIRExpr {
+impl Expr {
     fn from_pexpr<'a>(
-        expr: PExpr<'a>,
+        expr: CExpr<'a>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        use PExpr::*;
         match expr {
-            Len { id, .. } => match vst.get_sym(id) {
+            CExpr::Len { id, .. } => match vst.get_sym(id) {
                 None => Err(vec![UndeclaredIdentifier(id)]),
                 Some(var) => match var {
-                    HIRVar::Scalar { .. } => Err(vec![ExpectedArray(id)]),
-                    HIRVar::Array { size, .. } => Ok(Self::Len(*size)),
+                    Var::Scalar { .. } => Err(vec![ExpectedArray(id)]),
+                    Var::Array { size, .. } => Ok(Self::Len(*size)),
                 },
             },
-            Not(span, e) => {
+            CExpr::Not(span, e) => {
                 let e = Self::from_pexpr(*e, vst, fst)?;
                 e.is_boolean()
-                    .then(|| HIRExpr::Not(Box::new(e)))
+                    .then(|| Expr::Not(Box::new(e)))
                     .ok_or(vec![ExpectedBoolExpr(span)])
             }
-            Neg(span, e) => {
-                if let Literal { value, .. } = *e {
-                    HIRLiteral::from_pliteral(value, true).map(|value| value.into())
+            CExpr::Neg(span, e) => {
+                if let CExpr::Literal { value, .. } = *e {
+                    Literal::from_pliteral(value, true).map(|value| value.into())
                 } else {
                     let e = Self::from_pexpr(*e, vst, fst)?;
                     e.is_int()
-                        .then(|| HIRExpr::Neg(Box::new(e)))
+                        .then(|| Expr::Neg(Box::new(e)))
                         .ok_or(vec![ExpectedIntExpr(span)])
                 }
             }
-            Nested(_, e) => Self::from_pexpr(*e, vst, fst),
+            CExpr::Nested(_, e) => Self::from_pexpr(*e, vst, fst),
 
-            Index { name, offset, span } => match vst.get_sym(name) {
-                None => Err(vec![UndeclaredIdentifier(name)]),
-                Some(HIRVar::Scalar { .. }) => Err(vec![ExpectedArray(name)]),
+            CExpr::Loc(CLocation::Index {
+                ident,
+                offset,
+                span,
+            }) => match vst.get_sym(ident) {
+                None => Err(vec![UndeclaredIdentifier(ident)]),
+                Some(Var::Scalar { .. }) => Err(vec![ExpectedArray(ident)]),
                 Some(var) => {
                     let offset = Self::from_pexpr(*offset, vst, fst)?;
                     offset
                         .is_int()
-                        .then(|| HIRLoc::index(var.clone(), offset).into())
+                        .then(|| Location::index(var.clone(), offset).into())
                         .ok_or(vec![ExpectedIntExpr(span)])
                 }
             },
-            Scalar(ident) => match vst.get_sym(ident) {
+            CExpr::Loc(CLocation::Scalar(ident)) => match vst.get_sym(ident) {
                 None => Err(vec![UndeclaredIdentifier(ident)]),
-                Some(HIRVar::Scalar(var)) => Ok(HIRLoc::Scalar(var.clone()).into()),
+                Some(Var::Scalar(var)) => Ok(Location::Scalar(var.clone()).into()),
                 _ => Err(vec![ExpectedScalarVariable(ident)]),
             },
-            Ter { cond, yes, no, .. } => {
+            CExpr::Ter { cond, yes, no, .. } => {
                 let (cond_span, yes_span, no_span) = (cond.span(), yes.span(), no.span());
                 let cond = Self::from_pexpr(*cond, vst, fst);
                 let yes = Self::from_pexpr(*yes, vst, fst);
@@ -103,7 +105,7 @@ impl HIRExpr {
                     }
                 }
             }
-            BinOp { op, lhs, rhs, .. } => {
+            CExpr::BinOp { op, lhs, rhs, .. } => {
                 let lspan = lhs.span();
                 let rspan = rhs.span();
                 let lhs = Self::from_pexpr(*lhs, vst, fst);
@@ -181,37 +183,37 @@ impl HIRExpr {
                     }
                 }
             }
-            Literal { value, .. } => {
-                HIRLiteral::from_pliteral(value, false).map(|value| value.into())
+            CExpr::Literal { value, .. } => {
+                Literal::from_pliteral(value, false).map(|value| value.into())
             }
-            Call(call) => {
+            CExpr::Call(call) => {
                 let call_span = call.span();
-                HIRCall::from_pcall(call, vst, fst)
+                Call::from_pcall(call, vst, fst)
                     .and_then(|call| {
-                        if let HIRCall::Decaf { ret: None, .. } = call {
+                        if let Call::Decaf { ret: None, .. } = call {
                             Err(vec![VoidFuncAsExpr(call_span)])
                         } else {
                             Ok(call)
                         }
                     })
-                    .map(HIRExpr::Call)
+                    .map(Expr::Call)
             }
         }
     }
 }
 
-impl<'a> HIRLiteral {
-    fn from_pliteral(literal: PLiteral<'a>, is_neg: bool) -> Result<Self, Vec<Error<'a>>> {
+impl<'a> Literal {
+    fn from_pliteral(literal: cst::Literal<'a>, is_neg: bool) -> Result<Self, Vec<Error<'a>>> {
         let map_digit = if is_neg { |dig: i64| -dig } else { |dig| dig };
         match literal {
-            PLiteral::Decimal(num) => {
+            cst::Literal::Decimal(num) => {
                 let parsed = num.bytes().try_fold(0, |acc: i64, digit| {
                     acc.checked_mul(10)
                         .and_then(|acc| acc.checked_add(map_digit((digit - b'0') as i64)))
                 });
-                parsed.ok_or(vec![TooLargeInt(num)]).map(HIRLiteral::Int)
+                parsed.ok_or(vec![TooLargeInt(num)]).map(Literal::Int)
             }
-            PLiteral::Hex(num) => num
+            cst::Literal::Hex(num) => num
                 .bytes()
                 .try_fold(0, |acc: i64, digit| match digit {
                     b'0'..=b'9' => acc
@@ -228,34 +230,32 @@ impl<'a> HIRLiteral {
                     }
                 })
                 .ok_or(vec![TooLargeInt(num)])
-                .map(HIRLiteral::Int),
-            PLiteral::Bool(val) => Ok(HIRLiteral::Bool(val)),
-            PLiteral::Char(c) => Ok(HIRLiteral::Int(c as i64)),
+                .map(Literal::Int),
+            cst::Literal::Bool(val) => Ok(Literal::Bool(val)),
+            cst::Literal::Char(c) => Ok(Literal::Int(c as i64)),
         }
     }
 }
 
 impl ExternArg {
     fn extern_from_pcall<'a>(
-        arg: PArg<'a>,
+        arg: CArg<'a>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         match arg {
-            PArg::Expr(PExpr::Scalar(ident)) => {
+            CArg::Expr(CExpr::Loc(CLocation::Scalar(ident))) => {
                 if let Some(ident) = vst
                     .get_sym(ident)
                     .and_then(|var| var.is_array().then_some(var.name()))
                 {
-                    {
-                        Ok(Self::Array(ident.to_string()))
-                    }
+                    Ok(Self::Array(ident.to_string()))
                 } else {
-                    HIRExpr::from_pexpr(PExpr::Scalar(ident), vst, fst).map(Self::Expr)
+                    Expr::from_pexpr(CExpr::Loc(CLocation::Scalar(ident)), vst, fst).map(Self::Expr)
                 }
             }
-            PArg::Expr(e) => HIRExpr::from_pexpr(e, vst, fst).map(Self::Expr),
-            PArg::String(s) => Ok(s.into()),
+            CArg::Expr(e) => Expr::from_pexpr(e, vst, fst).map(Self::Expr),
+            CArg::String(s) => Ok(ExternArg::String(s.to_string())),
         }
     }
 }
@@ -280,9 +280,9 @@ impl<'a, T: Iterator<Item = Result<R, Vec<Error<'a>>>>, R> FoldResult<'a, R> for
     }
 }
 
-impl HIRCall {
+impl Call {
     fn from_pcall<'a>(
-        call: PCall<'a>,
+        call: cst::Call<'a>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
@@ -296,7 +296,7 @@ impl HIRCall {
                     .into_iter()
                     .map(|arg| ExternArg::extern_from_pcall(arg, vst, fst))
                     .fold_result()
-                    .map(|args| HIRCall::new_extern(name.clone(), args)),
+                    .map(|args| Call::new_extern(name.clone(), args)),
                 Some(FunctionSig::Decl {
                     name,
                     arg_types,
@@ -307,10 +307,10 @@ impl HIRCall {
                             .into_iter()
                             .zip(arg_types.iter())
                             .map(|(arg, r#type)| match arg {
-                                PArg::String(s) => Err(vec![StringInUserDefined(s.span())]),
-                                PArg::Expr(expr) => {
+                                CArg::String(s) => Err(vec![StringInUserDefined(s)]),
+                                CArg::Expr(expr) => {
                                     let span = expr.span();
-                                    HIRExpr::from_pexpr(expr, vst, fst).and_then(|expr| {
+                                    Expr::from_pexpr(expr, vst, fst).and_then(|expr| {
                                         if expr.r#type() != *r#type {
                                             Err(vec![ExpectedType {
                                                 expected: *r#type,
@@ -324,7 +324,7 @@ impl HIRCall {
                                 }
                             })
                             .fold_result()
-                            .map(|args| HIRCall::new_decaf(name.clone(), *ty, args))
+                            .map(|args| Call::new_decaf(name.clone(), *ty, args))
                     } else {
                         Err(vec![WrongNumberOfArgs {
                             expected: arg_types.len(),
@@ -338,74 +338,78 @@ impl HIRCall {
     }
 }
 
-impl HIRLoc {
+impl Location {
     fn from_ploc<'a>(
-        mut loc: PLoc<'a>,
+        loc: CLocation<'a>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        match (vst.get_sym(loc.ident()), loc.offset.take()) {
-            (Some(HIRVar::Scalar(var)), None) => Ok(HIRLoc::Scalar(var.clone())),
-            (Some(HIRVar::Scalar(_)), Some(_)) => Err(vec![CannotIndexScalar(loc.span())]),
-            (Some(HIRVar::Array { .. }), None) => {
-                // TODO: rename this error enum variant
-                Err(vec![CannotAssignToArray(loc.span())])
+        let loc_span = loc.span();
+        let loc_ident = loc.ident();
+        match (vst.get_sym(loc.ident()), loc) {
+            (Some(Var::Scalar(var)), CLocation::Scalar(_)) => Ok(Location::Scalar(var.clone())),
+            (Some(Var::Scalar(_)), CLocation::Index { .. }) => {
+                Err(vec![CannotIndexScalar(loc_span)])
             }
-            (Some(arr), Some(offset)) => {
+            (Some(Var::Array { .. }), CLocation::Scalar(_)) => {
+                // TODO: rename this error enum variant
+                Err(vec![CannotAssignToArray(loc_span)])
+            }
+            (Some(arr), CLocation::Index { offset, .. }) => {
                 let offset_span = offset.span();
-                let offset = HIRExpr::from_pexpr(offset, vst, fst)?;
-                if offset.r#type() == Type::Int {
-                    Ok(HIRLoc::index(arr.clone(), offset))
+                let offset = Expr::from_pexpr(*offset, vst, fst)?;
+                if offset.r#type() == cst::Type::Int {
+                    Ok(Location::index(arr.clone(), offset))
                 } else {
                     Err(vec![ExpectedIntExpr(offset_span)])
                 }
             }
-            (None, _) => Err(vec![UndeclaredIdentifier(loc.ident)]),
+            (None, _) => Err(vec![UndeclaredIdentifier(loc_ident)]),
         }
     }
 }
 
-impl HIRAssign {
+impl Assign {
     fn from_passign<'a>(
-        assign: PAssign<'a>,
+        assign: cst::Assign<'a>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        use parser::ast::PAssignExpr::*;
+        use cst::AssignExpr::*;
         use ArithOp::*;
         let lhs_span = assign.lhs.span();
-        let loc = HIRLoc::from_ploc(assign.lhs, vst, fst)?;
+        let loc = Location::from_ploc(assign.lhs, vst, fst)?;
         match assign.op {
             Inc => {
-                if loc.r#type() != Type::Int {
+                if loc.r#type() != cst::Type::Int {
                     Err(vec![IncNonInt(lhs_span)])
                 } else {
                     Ok(Self {
                         lhs: loc.clone(),
-                        rhs: HIRExpr::Arith {
+                        rhs: Expr::Arith {
                             op: Add,
                             lhs: Box::new(loc.into()),
-                            rhs: Box::new(HIRLiteral::from(1).into()),
+                            rhs: Box::new(Literal::from(1).into()),
                         },
                     })
                 }
             }
             Dec => {
-                if loc.r#type() != Type::Int {
+                if loc.r#type() != cst::Type::Int {
                     Err(vec![DecNonInt(lhs_span)])
                 } else {
                     Ok(Self {
                         lhs: loc.clone(),
-                        rhs: HIRExpr::Arith {
+                        rhs: Expr::Arith {
                             op: Sub,
                             lhs: Box::new(loc.into()),
-                            rhs: Box::new(HIRLiteral::from(1).into()),
+                            rhs: Box::new(Literal::from(1).into()),
                         },
                     })
                 }
             }
             Assign(expr) => {
-                let rhs = HIRExpr::from_pexpr(expr, vst, fst)?;
+                let rhs = Expr::from_pexpr(expr, vst, fst)?;
                 if rhs.r#type() != loc.r#type() {
                     Err(vec![AssignOfDifferentType {
                         lhs: lhs_span,
@@ -418,15 +422,15 @@ impl HIRAssign {
             }
             AddAssign(expr) => {
                 let rhs_span = expr.span();
-                let rhs = HIRExpr::from_pexpr(expr, vst, fst)?;
-                if rhs.r#type() != Type::Int {
+                let rhs = Expr::from_pexpr(expr, vst, fst)?;
+                if rhs.r#type() != cst::Type::Int {
                     Err(vec![ExpectedIntExpr(rhs_span)])
-                } else if loc.r#type() != Type::Int {
+                } else if loc.r#type() != cst::Type::Int {
                     Err(vec![ExpectedIntExpr(lhs_span)])
                 } else {
                     Ok(Self {
                         lhs: loc.clone(),
-                        rhs: HIRExpr::Arith {
+                        rhs: Expr::Arith {
                             op: Add,
                             lhs: Box::new(loc.into()),
                             rhs: Box::new(rhs),
@@ -436,15 +440,15 @@ impl HIRAssign {
             }
             SubAssign(expr) => {
                 let rhs_span = expr.span();
-                let rhs = HIRExpr::from_pexpr(expr, vst, fst)?;
-                if rhs.r#type() != Type::Int {
+                let rhs = Expr::from_pexpr(expr, vst, fst)?;
+                if rhs.r#type() != cst::Type::Int {
                     Err(vec![ExpectedIntExpr(rhs_span)])
-                } else if loc.r#type() != Type::Int {
+                } else if loc.r#type() != cst::Type::Int {
                     Err(vec![ExpectedIntExpr(lhs_span)])
                 } else {
                     Ok(Self {
                         lhs: loc.clone(),
-                        rhs: HIRExpr::Arith {
+                        rhs: Expr::Arith {
                             op: Sub,
                             lhs: Box::new(loc.into()),
                             rhs: Box::new(rhs),
@@ -456,15 +460,15 @@ impl HIRAssign {
     }
 }
 
-impl HIRVar {
-    fn from_pvar<'a>(var: PVar<'a>) -> Result<Self, Error<'a>> {
+impl Var {
+    fn from_pvar<'a>(var: cst::PVar<'a>) -> Result<Self, Error<'a>> {
         match var {
-            PVar::Scalar { ident, ty } => Ok(HIRVar::Scalar(Typed::new(ty, ident.to_string()))),
-            PVar::Array {
+            cst::PVar::Scalar { ident, ty } => Ok(Var::Scalar(Typed::new(ty, ident.to_string()))),
+            cst::PVar::Array {
                 ident, size, ty, ..
             } => {
                 let size_span = size.span();
-                if let Ok(size) = HIRLiteral::from_pliteral(PLiteral::from(size), false)
+                if let Ok(size) = Literal::from_pliteral(cst::Literal::from(size), false)
                     .map(|size| size.int().unwrap())
                 {
                     if size == 0 {
@@ -483,11 +487,11 @@ impl HIRVar {
     }
 }
 
-impl HIRBlock {
+impl Block {
     fn from_pblock<'a>(
-        block: PBlock<'a>,
+        block: cst::Block<'a>,
         in_loop: bool,
-        expected_return: Option<Type>,
+        expected_return: Option<cst::Type>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
@@ -499,7 +503,7 @@ impl HIRBlock {
             .stmts
             .into_iter()
             .map(|stmt| {
-                HIRStmt::from_pstmt(
+                Stmt::from_pstmt(
                     stmt,
                     in_loop,
                     expected_return,
@@ -515,27 +519,27 @@ impl HIRBlock {
     }
 }
 
-impl HIRStmt {
+impl Stmt {
     fn from_pstmt<'a>(
-        stmt: PStmt<'a>,
+        stmt: cst::PStmt<'a>,
         in_loop: bool,
-        expected_return: Option<Type>,
+        expected_return: Option<cst::Type>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
         match stmt {
-            PStmt::Call(call) => {
-                HIRCall::from_pcall(call, vst, fst).map(|call| Self::Expr(call.into()))
+            cst::PStmt::Call(call) => {
+                Call::from_pcall(call, vst, fst).map(|call| Self::Expr(Expr::Call(call)))
             }
-            PStmt::Return { span, expr } => match expr {
+            cst::PStmt::Return { span, expr } => match expr {
                 Some(expr) => {
                     let expr_span = expr.span();
-                    HIRExpr::from_pexpr(expr, vst, fst).and_then(|res| match expected_return {
+                    Expr::from_pexpr(expr, vst, fst).and_then(|res| match expected_return {
                         None => Err(vec![ReturnValueFromVoid(span)]),
-                        Some(Type::Int) if res.r#type() == Type::Int => Ok(res),
-                        Some(Type::Int) => Err(vec![ExpectedIntExpr(expr_span)]),
-                        Some(Type::Bool) if res.r#type() == Type::Bool => Ok(res),
-                        Some(Type::Bool) => Err(vec![ExpectedBoolExpr(expr_span)]),
+                        Some(cst::Type::Int) if res.r#type() == cst::Type::Int => Ok(res),
+                        Some(cst::Type::Int) => Err(vec![ExpectedIntExpr(expr_span)]),
+                        Some(cst::Type::Bool) if res.r#type() == cst::Type::Bool => Ok(res),
+                        Some(cst::Type::Bool) => Err(vec![ExpectedBoolExpr(expr_span)]),
                     })
                 }
                 .map(|expr| Self::Return(Some(expr))),
@@ -547,29 +551,29 @@ impl HIRStmt {
                     }
                 }
             },
-            PStmt::Break(span) => {
+            cst::PStmt::Break(span) => {
                 if in_loop {
                     Ok(Self::Break)
                 } else {
                     Err(vec![BreakOutsideLoop(span)])
                 }
             }
-            PStmt::Continue(span) => {
+            cst::PStmt::Continue(span) => {
                 if in_loop {
                     Ok(Self::Continue)
                 } else {
                     Err(vec![ContinueOutsideLoop(span)])
                 }
             }
-            PStmt::Assign(assign) => HIRAssign::from_passign(assign, vst, fst).map(Self::Assign),
-            PStmt::If { cond, yes, no, .. } => {
+            cst::PStmt::Assign(assign) => Assign::from_passign(assign, vst, fst).map(Self::Assign),
+            cst::PStmt::If { cond, yes, no, .. } => {
                 let cond_span = cond.span();
-                let cond = HIRExpr::from_pexpr(cond, vst, fst);
-                let yes = HIRBlock::from_pblock(yes, in_loop, expected_return, vst, fst);
-                let no = no.map(|no| HIRBlock::from_pblock(no, in_loop, expected_return, vst, fst));
+                let cond = Expr::from_pexpr(cond, vst, fst);
+                let yes = Block::from_pblock(yes, in_loop, expected_return, vst, fst);
+                let no = no.map(|no| Block::from_pblock(no, in_loop, expected_return, vst, fst));
                 match (cond, yes, no) {
                     (Ok(cond), Ok(yes), None) => {
-                        if cond.r#type() != Type::Bool {
+                        if cond.r#type() != cst::Type::Bool {
                             Err(vec![ExpectedBoolExpr(cond_span)])
                         } else {
                             Ok(Self::If {
@@ -580,7 +584,7 @@ impl HIRStmt {
                         }
                     }
                     (Ok(cond), Ok(yes), Some(Ok(no))) => {
-                        if cond.r#type() != Type::Bool {
+                        if cond.r#type() != cst::Type::Bool {
                             Err(vec![ExpectedBoolExpr(cond_span)])
                         } else {
                             Ok(Self::If {
@@ -607,10 +611,10 @@ impl HIRStmt {
                     }
                 }
             }
-            PStmt::While { cond, body, .. } => {
+            cst::PStmt::While { cond, body, .. } => {
                 let cond_span = cond.span();
-                let cond = HIRExpr::from_pexpr(cond, vst, fst);
-                let body = HIRBlock::from_pblock(body, true, expected_return, vst, fst);
+                let cond = Expr::from_pexpr(cond, vst, fst);
+                let body = Block::from_pblock(body, true, expected_return, vst, fst);
                 match (cond, body) {
                     (Ok(cond), Ok(body)) => {
                         if cond.is_boolean() {
@@ -634,7 +638,7 @@ impl HIRStmt {
                     }
                 }
             }
-            PStmt::For {
+            cst::PStmt::For {
                 init,
                 cond,
                 update,
@@ -642,10 +646,10 @@ impl HIRStmt {
                 ..
             } => {
                 let cond_span = cond.span();
-                let init = HIRAssign::from_passign(init, vst, fst);
-                let cond = HIRExpr::from_pexpr(cond, vst, fst);
-                let update = HIRAssign::from_passign(update, vst, fst);
-                let body = HIRBlock::from_pblock(body, true, expected_return, vst, fst);
+                let init = Assign::from_passign(init, vst, fst);
+                let cond = Expr::from_pexpr(cond, vst, fst);
+                let update = Assign::from_passign(update, vst, fst);
+                let body = Block::from_pblock(body, true, expected_return, vst, fst);
                 match (init, cond, update, body) {
                     (Ok(init), Ok(cond), Ok(update), Ok(body)) => {
                         if cond.is_boolean() {
@@ -681,9 +685,9 @@ impl HIRStmt {
     }
 }
 
-impl HIRFunction {
+impl Function {
     fn from_pfunction<'a>(
-        func: PFunction<'a>,
+        func: cst::PFunction<'a>,
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
@@ -697,7 +701,7 @@ impl HIRFunction {
         .map(Err)
         .unwrap_or(Ok(()))?;
         let args = construct_var_hashmap(func.args)?;
-        let body = HIRBlock::from_pblock(
+        let body = Block::from_pblock(
             func.body,
             false,
             func.ret,
@@ -708,8 +712,8 @@ impl HIRFunction {
     }
 }
 
-impl HIRRoot {
-    pub fn from_proot<'a>(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
+impl Root {
+    pub fn from_proot<'a>(root: cst::PRoot<'a>) -> Result<Self, Vec<Error>> {
         let redefs = get_redefs(
             root.imports
                 .iter()
@@ -739,12 +743,9 @@ impl HIRRoot {
                 .into_iter()
                 .map(|f| {
                     sigs.insert(f.name.to_string(), FunctionSig::get(&f));
-                    let r = HIRFunction::from_pfunction(
-                        f,
-                        &VSymMap::new(&globals),
-                        &FSymMap::new(&sigs),
-                    )
-                    .map(|f| (f.name.clone(), f));
+                    let r =
+                        Function::from_pfunction(f, &VSymMap::new(&globals), &FSymMap::new(&sigs))
+                            .map(|f| (f.name.clone(), f));
                     r
                 })
                 .fold_result()?

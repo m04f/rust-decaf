@@ -18,12 +18,12 @@ impl Display for Type {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct PImport<'a> {
+pub struct Import<'a> {
     span: Span<'a>,
     id: Span<'a>,
 }
 
-impl<'a> PImport<'a> {
+impl<'a> Import<'a> {
     pub fn name(&self) -> Span<'a> {
         self.id
     }
@@ -32,7 +32,7 @@ impl<'a> PImport<'a> {
     }
 }
 
-impl<'a> From<Spanned<'a, Span<'a>>> for PImport<'a> {
+impl<'a> From<Spanned<'a, Span<'a>>> for Import<'a> {
     fn from(value: Spanned<'a, Span<'a>>) -> Self {
         let (ident, span) = value.into_parts();
         Self { span, id: ident }
@@ -40,30 +40,15 @@ impl<'a> From<Spanned<'a, Span<'a>>> for PImport<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PString<'a>(Span<'a>);
-
-impl<'a> PString<'a> {
-    pub fn span(&self) -> Span<'a> {
-        self.0
-    }
-}
-
-impl<'a> From<Span<'a>> for PString<'a> {
-    fn from(value: Span<'a>) -> Self {
-        Self(value)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum PAssignExpr<'a> {
+pub enum AssignExpr<'a> {
     Inc,
     Dec,
-    AddAssign(PExpr<'a>),
-    SubAssign(PExpr<'a>),
-    Assign(PExpr<'a>),
+    AddAssign(Expr<'a>),
+    SubAssign(Expr<'a>),
+    Assign(Expr<'a>),
 }
 
-impl<'a> PAssignExpr<'a> {
+impl<'a> AssignExpr<'a> {
     pub fn is_assign(&self) -> bool {
         matches!(self, Self::Assign(_))
     }
@@ -73,32 +58,32 @@ impl<'a> PAssignExpr<'a> {
     pub fn dec() -> Self {
         Self::Dec
     }
-    pub fn add_assign(value: PExpr<'a>) -> Self {
+    pub fn add_assign(value: Expr<'a>) -> Self {
         Self::AddAssign(value)
     }
-    pub fn sub_assign(value: PExpr<'a>) -> Self {
+    pub fn sub_assign(value: Expr<'a>) -> Self {
         Self::SubAssign(value)
     }
-    pub fn assign(value: PExpr<'a>) -> Self {
+    pub fn assign(value: Expr<'a>) -> Self {
         Self::Assign(value)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PAssign<'a> {
-    pub lhs: PLoc<'a>,
-    pub op: PAssignExpr<'a>,
+pub struct Assign<'a> {
+    pub lhs: Location<'a>,
+    pub op: AssignExpr<'a>,
     pub span: Span<'a>,
 }
 
-impl<'a> PAssign<'a> {
+impl<'a> Assign<'a> {
     pub fn span(&self) -> Span<'a> {
         self.span
     }
-    pub fn op(&self) -> &PAssignExpr<'a> {
+    pub fn op(&self) -> &AssignExpr<'a> {
         &self.op
     }
-    pub fn new(lhs: PLoc<'a>, rhs: PAssignExpr<'a>, span: Span<'a>) -> Self {
+    pub fn new(lhs: Location<'a>, rhs: AssignExpr<'a>, span: Span<'a>) -> Self {
         Self { lhs, op: rhs, span }
     }
     pub fn is_assign(&self) -> bool {
@@ -107,30 +92,18 @@ impl<'a> PAssign<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum PArg<'a> {
-    String(PString<'a>),
-    Expr(PExpr<'a>),
-}
-
-impl<'a> From<PString<'a>> for PArg<'a> {
-    fn from(s: PString<'a>) -> Self {
-        Self::String(s)
-    }
-}
-
-impl<'a> From<PExpr<'a>> for PArg<'a> {
-    fn from(value: PExpr<'a>) -> Self {
-        Self::Expr(value)
-    }
+pub enum Arg<'a> {
+    String(Span<'a>),
+    Expr(Expr<'a>),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum PIntLiteral<'a> {
+pub enum IntLiteral<'a> {
     Decimal(Span<'a>),
     Hex(Span<'a>),
 }
 
-impl<'a> PIntLiteral<'a> {
+impl<'a> IntLiteral<'a> {
     pub fn span(&self) -> Span<'a> {
         match self {
             Self::Decimal(span) => *span,
@@ -139,33 +112,33 @@ impl<'a> PIntLiteral<'a> {
     }
 }
 
-impl<'a> From<PIntLiteral<'a>> for PLiteral<'a> {
-    fn from(value: PIntLiteral<'a>) -> Self {
+impl<'a> From<IntLiteral<'a>> for Literal<'a> {
+    fn from(value: IntLiteral<'a>) -> Self {
         match value {
-            PIntLiteral::Decimal(span) => Self::Decimal(span),
-            PIntLiteral::Hex(span) => Self::Hex(span),
+            IntLiteral::Decimal(span) => Self::Decimal(span),
+            IntLiteral::Hex(span) => Self::Hex(span),
         }
     }
 }
 
-impl<'a> TryFrom<PLiteral<'a>> for PIntLiteral<'a> {
+impl<'a> TryFrom<Literal<'a>> for IntLiteral<'a> {
     type Error = ();
-    fn try_from(value: PLiteral<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: Literal<'a>) -> Result<Self, Self::Error> {
         match value {
-            PLiteral::Decimal(span) => Ok(Self::Decimal(span)),
-            PLiteral::Hex(span) => Ok(Self::Hex(span)),
+            Literal::Decimal(span) => Ok(Self::Decimal(span)),
+            Literal::Hex(span) => Ok(Self::Hex(span)),
             _ => Err(()),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PBlock<'a> {
+pub struct Block<'a> {
     decls: Vec<PVar<'a>>,
     pub stmts: Vec<PStmt<'a>>,
 }
 
-impl<'a> PBlock<'a> {
+impl<'a> Block<'a> {
     pub fn new() -> Self {
         Self {
             decls: Vec::new(),
@@ -187,7 +160,7 @@ impl<'a> PBlock<'a> {
     }
 }
 
-impl<'a> Default for PBlock<'a> {
+impl<'a> Default for Block<'a> {
     fn default() -> Self {
         Self::new()
     }
@@ -195,26 +168,26 @@ impl<'a> Default for PBlock<'a> {
 
 /// a literal that can be used as an expression
 #[derive(Debug, Clone, Copy)]
-pub enum PLiteral<'a> {
+pub enum Literal<'a> {
     Decimal(Span<'a>),
     Hex(Span<'a>),
     Char(char),
     Bool(bool),
 }
 
-impl From<char> for PLiteral<'_> {
+impl From<char> for Literal<'_> {
     fn from(value: char) -> Self {
         Self::Char(value)
     }
 }
 
-impl From<bool> for PLiteral<'_> {
+impl From<bool> for Literal<'_> {
     fn from(value: bool) -> Self {
         Self::Bool(value)
     }
 }
 
-impl<'a> PLiteral<'a> {
+impl<'a> Literal<'a> {
     pub fn hex(span: Span<'a>) -> Self {
         Self::Hex(span)
     }
@@ -224,48 +197,42 @@ impl<'a> PLiteral<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum PExpr<'a> {
+pub enum Expr<'a> {
     Len {
         span: Span<'a>,
         id: Span<'a>,
     },
-    Nested(Span<'a>, Box<PExpr<'a>>),
-    Not(Span<'a>, Box<PExpr<'a>>),
-    Neg(Span<'a>, Box<PExpr<'a>>),
+    Nested(Span<'a>, Box<Expr<'a>>),
+    Not(Span<'a>, Box<Expr<'a>>),
+    Neg(Span<'a>, Box<Expr<'a>>),
     Ter {
-        cond: Box<PExpr<'a>>,
-        yes: Box<PExpr<'a>>,
-        no: Box<PExpr<'a>>,
+        cond: Box<Expr<'a>>,
+        yes: Box<Expr<'a>>,
+        no: Box<Expr<'a>>,
         span: Span<'a>,
     },
-    Call(PCall<'a>),
-    Index {
-        name: Span<'a>,
-        offset: Box<PExpr<'a>>,
-        span: Span<'a>,
-    },
-
-    Scalar(Span<'a>),
+    Call(Call<'a>),
+    Loc(Location<'a>),
     Literal {
         span: Span<'a>,
-        value: PLiteral<'a>,
+        value: Literal<'a>,
     },
     BinOp {
         op: Op,
-        lhs: Box<PExpr<'a>>,
-        rhs: Box<PExpr<'a>>,
+        lhs: Box<Expr<'a>>,
+        rhs: Box<Expr<'a>>,
         span: Span<'a>,
     },
 }
 
-impl<'a> From<Spanned<'a, PLiteral<'a>>> for PExpr<'a> {
-    fn from(value: Spanned<'a, PLiteral<'a>>) -> Self {
+impl<'a> From<Spanned<'a, Literal<'a>>> for Expr<'a> {
+    fn from(value: Spanned<'a, Literal<'a>>) -> Self {
         let (value, span) = value.into_parts();
         Self::Literal { span, value }
     }
 }
 
-impl<'a> From<Spanned<'a, char>> for PExpr<'a> {
+impl<'a> From<Spanned<'a, char>> for Expr<'a> {
     fn from(value: Spanned<'a, char>) -> Self {
         let (value, span) = value.into_parts();
         Self::Literal {
@@ -275,7 +242,7 @@ impl<'a> From<Spanned<'a, char>> for PExpr<'a> {
     }
 }
 
-impl<'a> From<Spanned<'a, bool>> for PExpr<'a> {
+impl<'a> From<Spanned<'a, bool>> for Expr<'a> {
     fn from(value: Spanned<'a, bool>) -> Self {
         let (value, span) = value.into_parts();
         Self::Literal {
@@ -285,37 +252,24 @@ impl<'a> From<Spanned<'a, bool>> for PExpr<'a> {
     }
 }
 
-impl<'a> From<PLoc<'a>> for PExpr<'a> {
-    fn from(value: PLoc<'a>) -> Self {
-        value.offset.map_or_else(
-            || Self::Scalar(value.ident),
-            |offset| Self::Index {
-                name: value.ident,
-                offset: Box::new(offset),
-                span: value.span,
-            },
-        )
-    }
-}
-
-impl<'a> PExpr<'a> {
+impl<'a> Expr<'a> {
     pub fn new_len(ident: Spanned<'a, Span<'a>>) -> Self {
         let (id, span) = ident.into_parts();
         Self::Len { span, id }
     }
-    pub fn new_neg(expr: Spanned<'a, PExpr<'a>>) -> Self {
+    pub fn new_neg(expr: Spanned<'a, Expr<'a>>) -> Self {
         let (expr, span) = expr.into_parts();
         Self::Neg(span, Box::new(expr))
     }
-    pub fn new_not(expr: Spanned<'a, PExpr<'a>>) -> Self {
+    pub fn new_not(expr: Spanned<'a, Expr<'a>>) -> Self {
         let (expr, span) = expr.into_parts();
         Self::Not(span, Box::new(expr))
     }
-    pub fn new_nested(expr: Spanned<'a, PExpr<'a>>) -> Self {
+    pub fn new_nested(expr: Spanned<'a, Expr<'a>>) -> Self {
         let (expr, span) = expr.into_parts();
         Self::Nested(span, Box::new(expr))
     }
-    pub fn new_binop(lhs: PExpr<'a>, rhs: PExpr<'a>, op: Op, span: Span<'a>) -> Self {
+    pub fn new_binop(lhs: Expr<'a>, rhs: Expr<'a>, op: Op, span: Span<'a>) -> Self {
         Self::BinOp {
             op,
             lhs: Box::new(lhs),
@@ -323,7 +277,7 @@ impl<'a> PExpr<'a> {
             span,
         }
     }
-    pub fn new_ter(cond: PExpr<'a>, yes: PExpr<'a>, no: PExpr<'a>, span: Span<'a>) -> Self {
+    pub fn new_ter(cond: Expr<'a>, yes: Expr<'a>, no: Expr<'a>, span: Span<'a>) -> Self {
         Self::Ter {
             cond: Box::new(cond),
             yes: Box::new(yes),
@@ -331,7 +285,7 @@ impl<'a> PExpr<'a> {
             span,
         }
     }
-    pub fn literal(&self) -> Option<&PLiteral<'a>> {
+    pub fn literal(&self) -> Option<&Literal<'a>> {
         match self {
             Self::Literal { value, .. } => Some(value),
             _ => None,
@@ -342,13 +296,12 @@ impl<'a> PExpr<'a> {
             Self::Len { span, .. }
             | Self::Not(span, _)
             | Self::Neg(span, _)
-            | Self::Literal { span, .. } => *span,
-            Self::Nested(span, _) => *span,
-            Self::Scalar(ident) => *ident,
-            Self::Ter { span, .. } => *span,
+            | Self::Literal { span, .. }
+            | Self::Nested(span, _)
+            | Self::Ter { span, .. }
+            | Self::BinOp { span, .. } => *span,
             Self::Call(call) => call.span(),
-            Self::Index { span, .. } => *span,
-            Self::BinOp { span, .. } => *span,
+            Self::Loc(l) => l.span(),
         }
     }
 }
@@ -372,36 +325,36 @@ pub enum Op {
 
 #[derive(Debug, Clone)]
 pub enum PStmt<'a> {
-    Call(PCall<'a>),
+    Call(Call<'a>),
     If {
-        cond: PExpr<'a>,
-        yes: PBlock<'a>,
-        no: Option<PBlock<'a>>,
+        cond: Expr<'a>,
+        yes: Block<'a>,
+        no: Option<Block<'a>>,
         span: Span<'a>,
     },
     While {
-        cond: PExpr<'a>,
-        body: PBlock<'a>,
+        cond: Expr<'a>,
+        body: Block<'a>,
         span: Span<'a>,
     },
     For {
-        init: PAssign<'a>,
-        cond: PExpr<'a>,
-        update: PAssign<'a>,
-        body: PBlock<'a>,
+        init: Assign<'a>,
+        cond: Expr<'a>,
+        update: Assign<'a>,
+        body: Block<'a>,
         span: Span<'a>,
     },
-    Assign(PAssign<'a>),
+    Assign(Assign<'a>),
     Return {
-        expr: Option<PExpr<'a>>,
+        expr: Option<Expr<'a>>,
         span: Span<'a>,
     },
     Break(Span<'a>),
     Continue(Span<'a>),
 }
 
-impl<'a> From<PAssign<'a>> for PStmt<'a> {
-    fn from(value: PAssign<'a>) -> Self {
+impl<'a> From<Assign<'a>> for PStmt<'a> {
+    fn from(value: Assign<'a>) -> Self {
         Self::Assign(value)
     }
 }
@@ -413,7 +366,7 @@ impl<'a> PStmt<'a> {
     pub fn r#continue(span: Span<'a>) -> Self {
         Self::Continue(span)
     }
-    pub fn r#if(cond: PExpr<'a>, yes: PBlock<'a>, no: Option<PBlock<'a>>, span: Span<'a>) -> Self {
+    pub fn r#if(cond: Expr<'a>, yes: Block<'a>, no: Option<Block<'a>>, span: Span<'a>) -> Self {
         Self::If {
             cond,
             yes,
@@ -421,14 +374,14 @@ impl<'a> PStmt<'a> {
             span,
         }
     }
-    pub fn r#while(cond: PExpr<'a>, body: PBlock<'a>, span: Span<'a>) -> Self {
+    pub fn r#while(cond: Expr<'a>, body: Block<'a>, span: Span<'a>) -> Self {
         Self::While { cond, body, span }
     }
     pub fn r#for(
-        init: PAssign<'a>,
-        cond: PExpr<'a>,
-        update: PAssign<'a>,
-        body: PBlock<'a>,
+        init: Assign<'a>,
+        cond: Expr<'a>,
+        update: Assign<'a>,
+        body: Block<'a>,
         span: Span<'a>,
     ) -> Self {
         Self::For {
@@ -439,7 +392,7 @@ impl<'a> PStmt<'a> {
             span,
         }
     }
-    pub fn r#return(expr: Option<PExpr<'a>>, span: Span<'a>) -> Self {
+    pub fn r#return(expr: Option<Expr<'a>>, span: Span<'a>) -> Self {
         Self::Return { expr, span }
     }
     pub fn span(&self) -> Span<'a> {
@@ -461,7 +414,7 @@ pub enum PVar<'a> {
     Array {
         ty: Type,
         ident: Span<'a>,
-        size: PIntLiteral<'a>,
+        size: IntLiteral<'a>,
         // we do not need to record spans for identifiers
         span: Span<'a>,
     },
@@ -490,7 +443,7 @@ impl<'a> PVar<'a> {
             Self::Scalar { ident, .. } => *ident,
         }
     }
-    pub fn new(ty: Type, ident: Span<'a>, size: Option<PIntLiteral<'a>>, span: Span<'a>) -> Self {
+    pub fn new(ty: Type, ident: Span<'a>, size: Option<IntLiteral<'a>>, span: Span<'a>) -> Self {
         size.map_or_else(
             || Self::Scalar { ty, ident },
             |size| Self::Array {
@@ -513,37 +466,49 @@ impl<'a> PVar<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PLoc<'a> {
-    pub ident: Span<'a>,
-    pub offset: Option<PExpr<'a>>,
-    span: Span<'a>,
+pub enum Location<'a> {
+    Scalar(Span<'a>),
+    Index {
+        ident: Span<'a>,
+        offset: Box<Expr<'a>>,
+        span: Span<'a>,
+    },
 }
 
-impl<'a> PLoc<'a> {
+impl<'a> Location<'a> {
     pub fn ident(&self) -> Span<'a> {
-        self.ident
+        match self {
+            Location::Scalar(name) => *name,
+            Location::Index { ident, .. } => *ident,
+        }
     }
     pub fn span(&self) -> Span<'a> {
-        self.span
+        match self {
+            Location::Scalar(span) => *span,
+            Location::Index { span, .. } => *span,
+        }
     }
-    pub fn new(ident: Span<'a>, offset: Option<PExpr<'a>>, span: Span<'a>) -> Self {
-        Self {
-            ident,
-            offset,
-            span,
+    pub fn new(ident: Span<'a>, offset: Option<Expr<'a>>, span: Span<'a>) -> Self {
+        match offset {
+            None => Location::Scalar(ident),
+            Some(offset) => Location::Index {
+                ident,
+                offset: Box::new(offset),
+                span,
+            },
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PCall<'a> {
+pub struct Call<'a> {
     pub name: Span<'a>,
-    pub args: Vec<PArg<'a>>,
+    pub args: Vec<Arg<'a>>,
     pub span: Span<'a>,
 }
 
-impl<'a> PCall<'a> {
-    pub fn new(name: Span<'a>, args: Vec<PArg<'a>>, span: Span<'a>) -> Self {
+impl<'a> Call<'a> {
+    pub fn new(name: Span<'a>, args: Vec<Arg<'a>>, span: Span<'a>) -> Self {
         Self { name, args, span }
     }
     pub fn span(&self) -> Span<'a> {
@@ -551,24 +516,24 @@ impl<'a> PCall<'a> {
     }
 }
 
-impl<'a> From<PCall<'a>> for PStmt<'a> {
-    fn from(call: PCall<'a>) -> Self {
+impl<'a> From<Call<'a>> for PStmt<'a> {
+    fn from(call: Call<'a>) -> Self {
         Self::Call(call)
     }
 }
 
-impl<'a> From<PCall<'a>> for PExpr<'a> {
-    fn from(value: PCall<'a>) -> Self {
+impl<'a> From<Call<'a>> for Expr<'a> {
+    fn from(value: Call<'a>) -> Self {
         Self::Call(value)
     }
 }
 
-pub type PArgs<'a> = Vec<PArg<'a>>;
+pub type PArgs<'a> = Vec<Arg<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct PFunction<'a> {
     pub name: Span<'a>,
-    pub body: PBlock<'a>,
+    pub body: Block<'a>,
     pub args: Vec<PVar<'a>>,
     pub ret: Option<Type>,
     span: Span<'a>,
@@ -585,7 +550,7 @@ impl<'a> PFunction<'a> {
         ret: Option<Type>,
         name: Span<'a>,
         args: Vec<PVar<'a>>,
-        body: PBlock<'a>,
+        body: Block<'a>,
         span: Span<'a>,
     ) -> Self {
         Self {
@@ -633,7 +598,7 @@ impl<'a> From<PFunction<'a>> for PBlockElem<'a> {
 pub enum PDocElem<'a> {
     Function(PFunction<'a>),
     Decl(Vec<PVar<'a>>, Span<'a>),
-    Import(PImport<'a>),
+    Import(Import<'a>),
 }
 
 impl<'a> PDocElem<'a> {
@@ -658,15 +623,15 @@ impl<'a> From<PFunction<'a>> for PDocElem<'a> {
     }
 }
 
-impl<'a> From<PImport<'a>> for PDocElem<'a> {
-    fn from(value: PImport<'a>) -> Self {
+impl<'a> From<Import<'a>> for PDocElem<'a> {
+    fn from(value: Import<'a>) -> Self {
         Self::Import(value)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PRoot<'a> {
-    pub imports: Vec<PImport<'a>>,
+    pub imports: Vec<Import<'a>>,
     pub decls: Vec<PVar<'a>>,
     pub funcs: Vec<PFunction<'a>>,
 }
@@ -715,8 +680,8 @@ pub(super) mod checker {
 
     impl StmtChecker {
         pub fn check<'a, F: FnMut(Error<'a>)>(stmt: &PStmt<'a>, mut callback: F) {
-            let mut check_nested_expr = |e: &PExpr<'a>| {
-                if let PExpr::Nested(..) = e {
+            let mut check_nested_expr = |e: &Expr<'a>| {
+                if let Expr::Nested(..) = e {
                 } else {
                     callback(Error::WrapInParens(e.span()))
                 }
@@ -725,11 +690,11 @@ pub(super) mod checker {
                 PStmt::If { cond, .. } => check_nested_expr(cond),
                 PStmt::While { cond, .. } => check_nested_expr(cond),
                 PStmt::For { init, update, .. } => {
-                    if let PAssignExpr::Assign(..) = init.op {
+                    if let AssignExpr::Assign(..) = init.op {
                     } else {
                         callback(Error::ForInitHasToBeAssign(init.span()))
                     }
-                    if let PAssignExpr::Assign(..) = update.op {
+                    if let AssignExpr::Assign(..) = update.op {
                         callback(Error::ForUpdateIsIncOrCompound(update.span()))
                     } else {
                     }

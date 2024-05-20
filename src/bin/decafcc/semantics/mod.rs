@@ -1,5 +1,5 @@
 use super::App;
-use dcfrs::{error::*, hir::*, lexer::*, span::*};
+use dcfrs::{error::*, ast::*, lexer::*, span::*};
 
 use std::fs::read_to_string;
 
@@ -18,7 +18,7 @@ impl App for Semantics {
                 ewrite(stderr, &input_file, e).unwrap();
             });
         let proot = parser.doc_elems().collect();
-        let hirtree = HIRRoot::from_proot(proot);
+        let hirtree = Root::from_proot(proot);
         match hirtree {
             Ok(_) => {
                 println!("{hirtree:#?}");
