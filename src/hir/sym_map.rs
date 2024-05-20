@@ -52,10 +52,7 @@ pub(super) fn construct_sig_hashmap<'a>(
     for i in 0..externs.len() {
         for j in 0..i {
             if externs[i].name() == externs[j].name() {
-                errors.push(Redifinition(
-                    externs[i].name(),
-                    externs[j].name(),
-                ));
+                errors.push(Redifinition(externs[i].name(), externs[j].name()));
             }
         }
     }
@@ -72,35 +69,36 @@ pub(super) fn construct_sig_hashmap<'a>(
 pub(super) fn construct_var_hashmap<'a, T: AsRef<[PVar<'a>]>>(
     vars: T,
 ) -> Result<VarSymMap, Vec<Error<'a>>> {
-    let mut errors = vec![];
-    let vars = vars.as_ref();
-    for i in 0..vars.len() {
-        for j in 0..i {
-            if vars[i].name() == vars[j].name() {
-                errors.push(Redifinition(vars[i].name(), vars[j].name()));
+    vars.as_ref().iter().fold(Ok(HashMap::new()), |r, v| {
+        match (r, HIRVar::from_pvar(*v)) {
+            (Ok(mut syms), Ok(sym)) => {
+                syms.insert(sym.name().to_string(), sym);
+                Ok(syms)
             }
+            (Err(mut errors), Err(e)) => {
+                errors.push(e);
+                Err(errors)
+            }
+            (Ok(_), Err(e)) => Err(vec![e]),
+            (errors @ Err(_), Ok(_)) => errors,
         }
-    }
-    let vars = vars
-        .iter()
-        .filter_map(|var| {
-            HIRVar::from_pvar(*var)
-                .map(|var| (var.name().to_string(), var))
-                .map_err(|e| errors.push(e))
-                .ok()
-        })
-        .collect();
-    if !errors.is_empty() {
-        Err(errors)
-    } else {
-        Ok(vars)
-    }
+    })
 }
 
-pub fn intersect<'a>(
-    map1: &HashSet<Span<'a>>,
-    map2: impl Iterator<Item = Span<'a>>,
-) -> Vec<Error<'a>> {
-    map2.filter_map(|span| map1.get(&span).map(|_| Redifinition(span, span)))
-        .collect()
+pub(super) fn get_redefs<'a>(syms: impl Iterator<Item = Span<'a>>) -> Option<Vec<Error<'a>>> {
+    let redefs = syms
+        .fold((vec![], HashSet::new()), |(mut redefs, mut syms), sym| {
+            if let Some(old_f) = syms.get(&sym) {
+                redefs.push(Error::Redifinition(*old_f, sym));
+            } else {
+                syms.insert(sym);
+            }
+            (redefs, syms)
+        })
+        .0;
+    if redefs.is_empty() {
+        None
+    } else {
+        Some(redefs)
+    }
 }

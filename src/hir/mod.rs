@@ -502,6 +502,9 @@ impl HIRBlock {
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
+        get_redefs(block.decls().iter().map(|v| v.name()))
+            .map(Err)
+            .unwrap_or(Ok(()))?;
         let block_vst = construct_var_hashmap(block.decls())?;
         let stmts = block
             .stmts
@@ -695,75 +698,37 @@ impl HIRFunction {
         vst: &VSymMap<'_>,
         fst: &FSymMap<'_>,
     ) -> Result<Self, Vec<Error<'a>>> {
-        let redefs = intersect(
-            &func.body
+        get_redefs(
+            func.body
                 .decls()
                 .iter()
-                .map(|v| v.span())
-                .collect::<HashSet<_>>(),
-            func.args.iter().map(|arg| arg.span()),
-        );
-        if redefs.is_empty() {
-            let args = construct_var_hashmap(func.args)?;
-            let body = HIRBlock::from_pblock(
-                func.body,
-                false,
-                func.ret,
-                &VSymMap::new(&args).parent(&vst),
-                fst,
-            )?;
-            Ok(Self::new(func.name, body, args, func.ret))
-        } else {
-            Err(redefs)
-        }
+                .map(|v| v.name())
+                .chain(func.args.iter().map(|v| v.name())),
+        )
+        .map(Err)
+        .unwrap_or(Ok(()))?;
+        let args = construct_var_hashmap(func.args)?;
+        let body = HIRBlock::from_pblock(
+            func.body,
+            false,
+            func.ret,
+            &VSymMap::new(&args).parent(&vst),
+            fst,
+        )?;
+        Ok(Self::new(func.name, body, args, func.ret))
     }
 }
 
 impl HIRRoot {
     pub fn from_proot<'a>(root: PRoot<'a>) -> Result<Self, Vec<Error>> {
-        let (import_redefs, imports_set) =
-            root.imports
-                .iter()
-                .fold((vec![], HashSet::new()), |(mut redefs, mut fs), f| {
-                    if let Some(old_f) = fs.get(&f.name()) {
-                        redefs.push(Error::Redifinition(*old_f, f.name()));
-                    } else {
-                        fs.insert(f.name());
-                    }
-                    (redefs, fs)
-                });
-        let (decls_redefs, decls_set) =
-            root.decls
-                .iter()
-                .fold((vec![], HashSet::new()), |(mut redefs, mut vs), v| {
-                    if let Some(old_v) = vs.get(&v.name()) {
-                        if !imports_set.contains(old_v) {
-                            redefs.push(Error::Redifinition(*old_v, v.name()));
-                        }
-                    } else {
-                        vs.insert(v.name());
-                    }
-                    (redefs, vs)
-                });
-        let (funcs_redefs, _) =
-            root.funcs
-                .iter()
-                .fold((vec![], HashSet::new()), |(mut redefs, mut fs), f| {
-                    if let Some(old_f) = fs.get(&f.name()) {
-                        if !imports_set.contains(old_f) && !decls_set.contains(old_f) {
-                            redefs.push(Error::Redifinition(*old_f, f.name()));
-                        }
-                    } else {
-                        fs.insert(f.name());
-                    }
-                    (redefs, fs)
-                });
-        let mut redefs = import_redefs;
-        redefs.extend(intersect(&imports_set, root.decls.iter().map(|v| v.name())));
-        redefs.extend(decls_redefs);
-        redefs.extend(intersect(&imports_set, root.funcs.iter().map(|f| f.name)));
-        redefs.extend(funcs_redefs);
-        redefs.extend(intersect(&decls_set, root.funcs.iter().map(|f| f.name)));
+        let redefs = get_redefs(
+            root
+            .imports
+            .iter()
+            .map(|f| f.name())
+            .chain(root.decls.iter().map(|v| v.name()))
+            .chain(root.funcs.iter().map(|f| f.name()))
+        ).unwrap_or(vec![]);
         let mut errors = redefs;
         if let Some(main) = root.funcs.iter().find(|f| f.name.as_str() == "main") {
             if !(main.args.is_empty() && main.ret.is_none()) {
