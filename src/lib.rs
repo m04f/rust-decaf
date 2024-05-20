@@ -1,5 +1,3 @@
-#![feature(if_let_guard)]
-
 pub mod error;
 pub mod lexer;
 pub mod log;

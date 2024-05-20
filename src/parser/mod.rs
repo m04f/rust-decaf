@@ -5,12 +5,10 @@ mod error;
 pub use error::*;
 use Error::*;
 pub mod ast;
-use ast::*;
 use ast::checker::*;
+use ast::*;
 
 type Result<T> = std::result::Result<T, ExitStatus>;
-
-
 
 /// the error returned by the parser.
 #[derive(Debug, PartialEq, Eq)]
@@ -840,7 +838,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Error<'a>)> Parser<'a
 
     fn consume(&mut self, token: Token) -> Result<()> {
         match self.peek() {
-            Token::CharLiteral(_) if let Token::CharLiteral(_) = token => {
+            Token::CharLiteral(_) if matches!(token, Token::CharLiteral(_)) => {
                 self.bump();
                 Ok(())
             }
@@ -848,7 +846,7 @@ impl<'a, I: Iterator<Item = Spanned<'a, Token>>, EH: FnMut(Error<'a>)> Parser<'a
                 self.bump();
                 Ok(())
             }
-            _ => Err(Clean)
+            _ => Err(Clean),
         }
     }
 
