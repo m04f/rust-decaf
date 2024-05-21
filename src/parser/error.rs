@@ -1,5 +1,5 @@
+use crate::error::CCError;
 use crate::lexer::Token;
-use crate::error::*;
 use crate::span::*;
 
 use Error::*;
@@ -38,7 +38,7 @@ pub enum Error<'a> {
 }
 
 impl CCError for Error<'_> {
-    fn msgs(self) -> Vec<(String, (usize, usize))> {
+    fn msgs(&self) -> Vec<(String, (usize, usize))> {
         match self {
             Expected {
                 expected,

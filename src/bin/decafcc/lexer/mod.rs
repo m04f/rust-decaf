@@ -66,7 +66,7 @@ impl App for Lexer {
                     }
                     // errors are logged in the lexer module anyways
                     Err(e) => {
-                        ewrite(stderr, &input_file, *e).unwrap();
+                        write!(stderr, "{}", &e.to_error(&input_file)).unwrap();
                         Some(())
                     }
                     _ => unreachable!(),

@@ -47,7 +47,7 @@ pub enum Error<'a> {
 }
 
 impl CCError for Error<'_> {
-    fn msgs(self) -> Vec<(String, (usize, usize))> {
+    fn msgs(&self) -> Vec<(String, (usize, usize))> {
         match self {
             Self::AssignOfDifferentType { lhs, ltype, rtype } => {
                 vec![(

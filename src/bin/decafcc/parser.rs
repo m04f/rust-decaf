@@ -1,7 +1,7 @@
 use std::fs::read_to_string;
 
 use crate::*;
-use dcfrs::{error::ewrite, lexer::*, span::SpanSource};
+use dcfrs::{lexer::*, span::SpanSource, error::CCError};
 
 #[cfg(test)]
 mod test;
@@ -18,7 +18,7 @@ impl App for Parser {
         let code = SpanSource::new(&text);
         let mut parser =
             dcfrs::parser::Parser::new(tokens(code.source()).map(|s| s.map(|t| t.unwrap())), |e| {
-                ewrite(stderr, &input_file, e).unwrap()
+                write!(stderr, "{}", e.to_error(&input_file)).unwrap();
             });
         parser.doc_elems().for_each(|_| {});
         if parser.finised() && !parser.found_errors() {

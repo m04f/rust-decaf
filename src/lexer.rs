@@ -493,7 +493,7 @@ pub fn tokens(mut text: Span) -> impl Iterator<Item = Spanned<Result>> {
     ))
 }
 
-fn single_error_msg(err: Error) -> String {
+fn single_error_msg(err: &Error) -> String {
     match err {
         Error::EmptyHexLiteral(span) => {
             format!("invalid hex literal: {}", span.to_string())
@@ -521,10 +521,10 @@ fn single_error_msg(err: Error) -> String {
 }
 
 impl<'a> CCError for Error<'a> {
-    fn msgs(self) -> Vec<(String, (usize, usize))> {
+    fn msgs(&self) -> Vec<(String, (usize, usize))> {
         match self {
-            Error::StringLiteral(str) => get_string_errors(str)
-                .map(|err| (single_error_msg(err), err.position()))
+            Error::StringLiteral(str) => get_string_errors(*str)
+                .map(|err| (single_error_msg(&err), err.position()))
                 .collect(),
             _ => vec![(single_error_msg(self), self.position())],
         }

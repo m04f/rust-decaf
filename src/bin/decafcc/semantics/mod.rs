@@ -1,5 +1,5 @@
 use super::App;
-use dcfrs::{error::*, ast::*, lexer::*, span::*};
+use dcfrs::{ast::*, error::*, lexer::*, span::*};
 
 use std::fs::read_to_string;
 
@@ -15,7 +15,7 @@ impl App for Semantics {
         let code = SpanSource::new(&text);
         let mut parser =
             dcfrs::parser::Parser::new(tokens(code.source()).map(|s| s.map(|t| t.unwrap())), |e| {
-                ewrite(stderr, &input_file, e).unwrap();
+                write!(stderr, "{}", e.to_error(&input_file)).unwrap();
             });
         let proot = parser.doc_elems().collect();
         let hirtree = Root::from_proot(proot);
@@ -26,7 +26,7 @@ impl App for Semantics {
             }
             Err(errs) => {
                 errs.into_iter()
-                    .try_for_each(|err| ewrite(stderr, &input_file, err))
+                    .try_for_each(|err| write!(stderr, "{}", err.to_error(&input_file)))
                     .unwrap();
                 crate::ExitStatus::Fail
             }
