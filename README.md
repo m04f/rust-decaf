@@ -1,10 +1,3 @@
 # dcfrs
 
-implementation of decaf language in rust.
-
-## Scanner
-
-|        | passing | failing |
-|--------|---------|---------|
-| public | 29      | 0       |
-| hidden | 27      | 0       |
+This project had major design and readability issues so I started a rewrite at [decafc](https://github.com/mostafa-khaled775/decafc).
