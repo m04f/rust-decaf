@@ -46,7 +46,7 @@ cargo run -- decafcc
 ## References
 
 - [MIT 6.035: Computer Language Engineering](http://6.035.scripts.mit.edu/fa18/)
-- [Decaf Language Specification](http://6.035.scripts.mit.edu/fa18/decaf.pdf)
+- [Decaf Language Specification]([http://6.035.scripts.mit.edu/fa18/decaf.pdf](http://6.035.scripts.mit.edu/fa18/handout-pdfs/01-decaf-spec.pdf))
 
 ---
 
